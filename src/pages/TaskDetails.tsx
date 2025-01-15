@@ -18,6 +18,7 @@ export function TaskDetails() {
   const [bidAmount, setBidAmount] = useState('');
   const [submittingBid, setSubmittingBid] = useState(false);
   const [updatingBidId, setUpdatingBidId] = useState<string | null>(null);
+  const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -79,29 +80,36 @@ export function TaskDetails() {
       setAttachments(data || []);
     } catch (err) {
       console.error('Error fetching attachments:', err);
+      setError('Failed to load attachments');
     }
   };
 
   const handleDownload = async (attachment: TaskAttachment) => {
     try {
+      setDownloadingFile(attachment.id);
+      setError(null);
+
       const { data, error } = await supabase.storage
         .from('attachments')
         .download(attachment.file_path);
 
       if (error) throw error;
 
-      // Create a download link
-      const url = URL.createObjectURL(data);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = attachment.file_name;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      // Create a blob URL and trigger download
+      const blob = new Blob([data], { type: attachment.file_type });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = attachment.file_name;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
     } catch (err) {
       console.error('Error downloading file:', err);
-      setError('Failed to download file');
+      setError('Failed to download file. Please try again.');
+    } finally {
+      setDownloadingFile(null);
     }
   };
 
@@ -265,9 +273,17 @@ export function TaskDetails() {
                     </div>
                     <button
                       onClick={() => handleDownload(attachment)}
-                      className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full"
+                      disabled={downloadingFile === attachment.id}
+                      className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full disabled:opacity-50"
                     >
-                      <Download className="w-4 h-4" />
+                      {downloadingFile === attachment.id ? (
+                        <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                      ) : (
+                        <Download className="w-4 h-4" />
+                      )}
                     </button>
                   </div>
                 ))}
