@@ -3,11 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { useProfile } from '../lib/hooks';
 import { supabase } from '../lib/supabase';
-import { Clock, DollarSign, Users, AlertCircle, Check, X } from 'lucide-react';
-import { initiateEscrowPayment, verifyEscrowPayment } from '../lib/payments';
-import { TaskSubmissionForm } from '../components/TaskSubmissionForm';
-import { TaskReviewForm } from '../components/TaskReviewForm';
-import type { Task, Bid } from '../lib/types';
+import { Clock, DollarSign, Users, AlertCircle, Check, X, Download, Paperclip } from 'lucide-react';
+import type { Task, Bid, TaskAttachment } from '../lib/types';
 
 export function TaskDetails() {
   const { id } = useParams();
@@ -15,25 +12,19 @@ export function TaskDetails() {
   const { profile } = useProfile(user?.id);
   const [task, setTask] = useState<Task | null>(null);
   const [bids, setBids] = useState<Bid[]>([]);
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [processingPayment, setProcessingPayment] = useState(false);
-  const [submission, setSubmission] = useState<any>(null);
-  const [updatingBidId, setUpdatingBidId] = useState<string | null>(null);
   const [bidAmount, setBidAmount] = useState('');
   const [submittingBid, setSubmittingBid] = useState(false);
+  const [updatingBidId, setUpdatingBidId] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) {
       fetchTaskAndBids();
+      fetchAttachments();
     }
   }, [id]);
-
-  useEffect(() => {
-    if (task?.status === 'in_progress') {
-      fetchSubmission();
-    }
-  }, [task?.status]);
 
   const fetchTaskAndBids = async () => {
     try {
@@ -76,49 +67,41 @@ export function TaskDetails() {
     }
   };
 
-  const fetchSubmission = async () => {
-    if (!task) return;
-
+  const fetchAttachments = async () => {
     try {
       const { data, error } = await supabase
-        .from('task_submissions')
+        .from('task_attachments')
         .select('*')
-        .eq('task_id', task.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .eq('task_id', id)
+        .order('created_at', { ascending: true });
 
       if (error) throw error;
-      setSubmission(data);
+      setAttachments(data || []);
     } catch (err) {
-      console.error('Error fetching submission:', err);
+      console.error('Error fetching attachments:', err);
     }
   };
 
-  const handleAcceptBid = async (bidId: string, amount: number) => {
-    if (!task || !profile) return;
-    
-    setProcessingPayment(true);
-    setError(null);
-
+  const handleDownload = async (attachment: TaskAttachment) => {
     try {
-      // Initiate escrow payment
-      const { paymentId, escrowId } = await initiateEscrowPayment(
-        task.id,
-        bidId,
-        amount
-      );
+      const { data, error } = await supabase.storage
+        .from('attachments')
+        .download(attachment.file_path);
 
-      // Verify payment
-      await verifyEscrowPayment(escrowId, paymentId);
+      if (error) throw error;
 
-      // Refresh task details
-      await fetchTaskAndBids();
+      // Create a download link
+      const url = URL.createObjectURL(data);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = attachment.file_name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     } catch (err) {
-      console.error('Error processing payment:', err);
-      setError(err instanceof Error ? err.message : 'Failed to process payment');
-    } finally {
-      setProcessingPayment(false);
+      console.error('Error downloading file:', err);
+      setError('Failed to download file');
     }
   };
 
@@ -132,17 +115,24 @@ export function TaskDetails() {
       const bid = bids.find((b) => b.id === bidId);
       if (!bid) throw new Error('Bid not found');
 
-      if (action === 'reject') {
+      if (action === 'accept') {
+        const { error: updateError } = await supabase.rpc('accept_bid', {
+          p_task_id: task.id,
+          p_bid_id: bidId,
+          p_executor_id: bid.bidder_id
+        });
+
+        if (updateError) throw updateError;
+      } else {
         const { error: bidError } = await supabase
           .from('bids')
           .update({ status: 'rejected' })
           .eq('id', bidId);
 
         if (bidError) throw bidError;
-        await fetchTaskAndBids();
-      } else {
-        await handleAcceptBid(bidId, bid.amount);
       }
+
+      fetchTaskAndBids();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update bid');
     } finally {
@@ -255,6 +245,36 @@ export function TaskDetails() {
             </p>
           </div>
 
+          {attachments.length > 0 && (
+            <div className="mb-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                Attachments
+              </h2>
+              <div className="space-y-2">
+                {attachments.map((attachment) => (
+                  <div
+                    key={attachment.id}
+                    className="flex items-center justify-between p-2 bg-gray-50 rounded-md"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Paperclip className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm text-gray-900">{attachment.file_name}</span>
+                      <span className="text-xs text-gray-500">
+                        ({Math.round(attachment.file_size / 1024)} KB)
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleDownload(attachment)}
+                      className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between py-3 border-t">
             <div className="flex items-center">
               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -363,16 +383,16 @@ export function TaskDetails() {
                   {bid.status === 'pending' && (
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => handleAcceptBid(bid.id, bid.amount)}
-                        disabled={processingPayment || updatingBidId === bid.id}
+                        onClick={() => handleBidAction(bid.id, 'accept')}
+                        disabled={updatingBidId === bid.id}
                         className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
                       >
                         <Check className="w-4 h-4 mr-1" />
-                        {processingPayment && updatingBidId === bid.id ? 'Processing...' : 'Accept & Pay'}
+                        Accept
                       </button>
                       <button
                         onClick={() => handleBidAction(bid.id, 'reject')}
-                        disabled={processingPayment || updatingBidId === bid.id}
+                        disabled={updatingBidId === bid.id}
                         className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
                       >
                         <X className="w-4 h-4 mr-1" />
@@ -392,47 +412,6 @@ export function TaskDetails() {
                 </div>
               ))}
             </div>
-          </div>
-        </div>
-      )}
-
-      {task.status === 'in_progress' && (
-        <div className="mt-6 bg-white rounded-lg shadow-md overflow-hidden">
-          <div className="p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Task Submission
-            </h2>
-            {submission ? (
-              <>
-                <div className="mb-4">
-                  <h3 className="text-sm font-medium text-gray-700">Submission Details</h3>
-                  <p className="mt-1 text-gray-600">{submission.content}</p>
-                  <p className="mt-2 text-sm text-gray-500">
-                    Submitted on {new Date(submission.created_at).toLocaleDateString()}
-                  </p>
-                </div>
-                {isCreator && submission.status === 'pending' && (
-                  <>
-                    <h3 className="text-sm font-medium text-gray-700 mb-2">Review Submission</h3>
-                    <TaskReviewForm
-                      taskId={task.id}
-                      submissionId={submission.id}
-                      onReview={fetchTaskAndBids}
-                    />
-                  </>
-                )}
-              </>
-            ) : (
-              task.executor_id === profile?.id && (
-                <TaskSubmissionForm
-                  taskId={task.id}
-                  onSubmit={() => {
-                    fetchSubmission();
-                    fetchTaskAndBids();
-                  }}
-                />
-              )
-            )}
           </div>
         </div>
       )}
