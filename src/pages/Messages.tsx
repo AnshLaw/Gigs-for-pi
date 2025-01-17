@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import { Send, Paperclip, X, Download } from 'lucide-react';
+import { Send, Paperclip, X, Download, ChevronLeft, Menu } from 'lucide-react';
 import type { RealtimeChannel, Attachment, CustomFileOptions } from '../lib/types/supabase';
 
 interface Message {
@@ -34,6 +34,7 @@ export function Messages() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [showTasksList, setShowTasksList] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
@@ -272,6 +273,14 @@ export function Messages() {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
+   const handleTaskSelect = (taskId: string) => {
+    setSelectedTask(taskId);
+    // On mobile, hide the tasks list after selection
+    if (window.innerWidth < 768) {
+      setShowTasksList(false);
+    }
+  };
+
   if (!user) {
     return (
       <div className="text-center py-12">
@@ -280,19 +289,23 @@ export function Messages() {
     );
   }
 
+  const selectedTaskTitle = tasks.find(t => t.id === selectedTask)?.title;
+
   return (
-    <div className="max-w-6xl mx-auto">
-      <div className="flex gap-4 h-[calc(100vh-12rem)]">
-        {/* Tasks Sidebar */}
-        <div className="w-64 bg-white shadow-md rounded-lg overflow-hidden flex-shrink-0">
-          <div className="p-4 border-b bg-white sticky top-0 z-10">
+    <div className="max-w-6xl mx-auto h-[calc(100vh-4rem)]">
+      <div className="flex h-full bg-gray-50 rounded-lg overflow-hidden">
+        {/* Tasks Sidebar - Hidden on mobile when showing chat */}
+        <div className={`${
+          showTasksList ? 'block' : 'hidden'
+        } md:block w-full md:w-80 bg-white border-r border-gray-200 flex-shrink-0`}>
+          <div className="p-4 border-b bg-white sticky top-0 z-10 flex items-center justify-between">
             <h2 className="font-semibold text-gray-900">Active Tasks</h2>
           </div>
           <div className="overflow-y-auto h-[calc(100%-4rem)]">
             {tasks.map((task) => (
               <button
                 key={task.id}
-                onClick={() => setSelectedTask(task.id)}
+                onClick={() => handleTaskSelect(task.id)}
                 className={`w-full text-left p-4 hover:bg-gray-50 transition-colors ${
                   selectedTask === task.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''
                 }`}
@@ -308,10 +321,34 @@ export function Messages() {
           </div>
         </div>
 
-        {/* Messages Area */}
-        <div className="flex-1 bg-white shadow-md rounded-lg overflow-hidden">
+        {/* Messages Area - Full width on mobile */}
+        <div className={`${
+          !showTasksList ? 'block' : 'hidden'
+        } md:block flex-1 flex flex-col bg-white`}>
           {selectedTask ? (
-            <div className="h-full flex flex-col">
+            <>
+              {/* Chat Header */}
+              <div className="p-4 border-b bg-white sticky top-0 z-10 flex items-center gap-2">
+                <button
+                  onClick={() => setShowTasksList(true)}
+                  className="md:hidden p-2 -ml-2 text-gray-500 hover:text-gray-700"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
+                <div className="flex-1 min-w-0">
+                  <h2 className="font-semibold text-gray-900 truncate">
+                    {selectedTaskTitle}
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setShowTasksList(!showTasksList)}
+                  className="md:hidden p-2 -mr-2 text-gray-500 hover:text-gray-700"
+                >
+                  <Menu className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Messages List */}
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {messages.map((message) => (
                   <div
@@ -361,7 +398,8 @@ export function Messages() {
                 <div ref={messagesEndRef} />
               </div>
 
-              <div className="p-4 border-t">
+              {/* Message Input */}
+              <div className="p-4 border-t bg-white">
                 {error && (
                   <div className="mb-4 text-sm text-red-600 bg-red-50 rounded p-2">
                     {error}
@@ -377,7 +415,7 @@ export function Messages() {
                     className="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                   />
                   
-                  <div className="relative">
+                  <div className="relative flex-shrink-0">
                     <input
                       type="file"
                       ref={fileInputRef}
@@ -443,7 +481,7 @@ export function Messages() {
                   </div>
                 )}
               </div>
-            </div>
+            </>
           ) : (
             <div className="h-full flex items-center justify-center">
               <div className="text-center text-gray-500">
