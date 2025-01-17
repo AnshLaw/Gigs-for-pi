@@ -1,13 +1,4 @@
-// import { supabase } from './supabase';
-import axios from 'axios';
-import type { PaymentData, PaymentCallbacks } from '../types/pi'; // Updated import path
-import '../types/pi'; // Updated import path
-
-// Pi Platform API client
-const piApi = axios.create({
-  baseURL: 'https://api.minepi.com/v2',
-  timeout: 20000,
-});
+import type { PaymentData, PaymentCallbacks } from '../types/pi';
 
 export async function initiatePayment(amount: number = 1) {
   if (!window.Pi) {
@@ -17,60 +8,34 @@ export async function initiatePayment(amount: number = 1) {
   return new Promise((resolve, reject) => {
     const paymentData: PaymentData = {
       amount,
-      memo: "Test payment",
-      metadata: { timestamp: Date.now() }
+      memo: "Test payment to app",
+      metadata: { type: "test_payment", timestamp: Date.now() }
     };
 
     const callbacks: PaymentCallbacks = {
-      onReadyForServerApproval: async (paymentId: string) => {
-        try {
-          // Send payment ID to your server for approval
-          const response = await axios.post('/api/payments/approve', { paymentId });
-          console.log('Payment approved:', response.data);
-        } catch (err) {
-          console.error('Error approving payment:', err);
-          reject(err);
-        }
+      onReadyForServerApproval: function(paymentId) {
+        console.log("onReadyForServerApproval", paymentId);
+        resolve({ status: "waiting_for_completion", paymentId });
       },
-
-      onReadyForServerCompletion: async (paymentId: string, txid: string) => {
-        try {
-          // Send transaction ID to your server to complete the payment
-          const response = await axios.post('/api/payments/complete', { 
-            paymentId,
-            txid
-          });
-          console.log('Payment completed:', response.data);
-          resolve({ paymentId, txid });
-        } catch (err) {
-          console.error('Error completing payment:', err);
-          reject(err);
-        }
+      onReadyForServerCompletion: function(paymentId, txid) {
+        console.log("onReadyForServerCompletion", paymentId, txid);
+        resolve({ status: "completed", paymentId, txid });
       },
-
-      onCancel: (paymentId: string) => {
-        console.log('Payment cancelled:', paymentId);
+      onCancel: function(paymentId) {
+        console.log("onCancel", paymentId);
         reject(new Error('Payment cancelled'));
       },
-
-      onError: (error: Error, payment?: any) => {
-        console.error('Payment error:', error, payment);
-        reject(error);
+      onError: function(error, payment) {
+        console.error("onError", error, payment);
+        if (error.message === "User cancelled consent") {
+          // Handle consent cancellation gracefully
+          reject(new Error('Please approve the payment to continue'));
+        } else {
+          reject(error);
+        }
       }
     };
 
     window.Pi.createPayment(paymentData, callbacks);
   });
-}
-
-export async function handleIncompletePayment(payment: any) {
-  try {
-    // Send incomplete payment to your server
-    const response = await axios.post('/api/payments/incomplete', { payment });
-    console.log('Handled incomplete payment:', response.data);
-    return response.data;
-  } catch (err) {
-    console.error('Error handling incomplete payment:', err);
-    throw err;
-  }
 }

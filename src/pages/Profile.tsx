@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { useProfile } from '../lib/hooks';
 import { AuthForm } from '../components/AuthForm';
+import { PaymentButton } from '../components/PaymentButton';
 import { AlertCircle, Copy, Check } from 'lucide-react';
 
 export function Profile() {
   const { user, loading: authLoading, signOut } = useAuth();
   const { profile, loading: profileLoading, error } = useProfile(user?.id);
   const [copied, setCopied] = useState(false);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
 
   const handleCopyWallet = async () => {
     if (profile?.wallet_address) {
@@ -19,6 +21,12 @@ export function Profile() {
         console.error('Failed to copy wallet address:', err);
       }
     }
+  };
+
+  const handlePaymentSuccess = (result: any) => {
+    console.log('Payment successful:', result);
+    setPaymentSuccess(true);
+    setTimeout(() => setPaymentSuccess(false), 3000);
   };
 
   if (!user) {
@@ -104,6 +112,18 @@ export function Profile() {
               <div>
                 <label className="block text-sm font-medium text-gray-700">Completed Tasks</label>
                 <div className="mt-1 text-gray-900">{profile.completed_tasks}</div>
+              </div>
+
+              <div className="pt-4 border-t">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Test Payment</h3>
+                <div className="flex items-center gap-4">
+                  <PaymentButton amount={1} onSuccess={handlePaymentSuccess} />
+                  {paymentSuccess && (
+                    <span className="text-sm text-green-600 animate-fade-in">
+                      Payment successful!
+                    </span>
+                  )}
+                </div>
               </div>
             </>
           )}

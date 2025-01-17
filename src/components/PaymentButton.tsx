@@ -2,7 +2,12 @@ import { useState } from 'react';
 import { initiatePayment } from '../lib/payments';
 import { Button } from './ui/Button';
 
-export function PaymentButton() {
+interface PaymentButtonProps {
+  amount?: number;
+  onSuccess?: (result: any) => void;
+}
+
+export function PaymentButton({ amount = 1, onSuccess }: PaymentButtonProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -11,9 +16,13 @@ export function PaymentButton() {
     setError(null);
 
     try {
-      const result = await initiatePayment(1); // 1 Pi test payment
-      console.log('Payment successful:', result);
+      const result = await initiatePayment(amount);
+      console.log('Payment result:', result);
+      if (onSuccess) {
+        onSuccess(result);
+      }
     } catch (err) {
+      console.error('Payment error:', err);
       setError(err instanceof Error ? err.message : 'Payment failed');
     } finally {
       setLoading(false);
@@ -21,20 +30,21 @@ export function PaymentButton() {
   };
 
   return (
-    <div className="space-y-4">
-      {error && (
-        <div className="text-sm text-red-600 bg-red-50 p-2 rounded">
-          {error}
-        </div>
-      )}
-      
+    <div className="space-y-2">
       <Button
         onClick={handlePayment}
         disabled={loading}
         isLoading={loading}
+        variant="primary"
       >
-        Pay 1 π
+        {loading ? 'Processing...' : `Pay ${amount} π`}
       </Button>
+      
+      {error && (
+        <p className="text-sm text-red-600">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
