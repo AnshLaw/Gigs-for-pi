@@ -76,26 +76,21 @@ export function useAuth() {
         throw new Error('Failed to get Pi username');
       }
 
-      // Simple email format for auth
-      const email = `${piUser.username}@gigs.user`;
-      const password = `PI_${piUser.uid}`;
-
-      // Try to sign in
+      // First, try to sign in
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+        email: `${piUser.username}@pi.user`,
+        password: `PI_${piUser.uid}`,
       });
 
-      // If sign in succeeds, we're done
       if (!signInError) {
         setUser(signInData.user);
         return { error: null };
       }
 
-      // If sign in fails, create a new account
+      // If sign in fails, try to create a new account
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
+        email: `${piUser.username}@pi.user`,
+        password: `PI_${piUser.uid}`,
         options: {
           data: {
             username: piUser.username,
@@ -104,48 +99,33 @@ export function useAuth() {
         },
       });
 
-      // Handle sign up errors
       if (signUpError) {
-        // If user exists, force sign in
-        if (signUpError.message.includes('User already registered')) {
-          const { data: forceSignInData, error: forceSignInError } = await supabase.auth.signInWithPassword({
-            email,
-            password,
-          });
-
-          if (forceSignInError) {
-            throw new Error('Unable to sign in. Please try again.');
-          }
-
-          setUser(forceSignInData.user);
-          return { error: null };
-        }
-
-        throw signUpError;
+        // If user exists but we couldn't sign in, something is wrong
+        throw new Error('Unable to authenticate. Please try again.');
       }
 
-      // If we have a new user, create their profile
-      if (signUpData.user) {
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            pi_user_id: signUpData.user.id,
-            username: piUser.username,
-            rating: 0,
-            completed_tasks: 0,
-          });
-
-        if (profileError) {
-          console.error('Profile creation error:', profileError);
-          await supabase.auth.signOut();
-          throw new Error('Failed to create profile');
-        }
-
-        setUser(signUpData.user);
-        return { error: null };
+      if (!signUpData.user) {
+        throw new Error('Failed to create account');
       }
 
-      throw new Error('Failed to authenticate');
+      // Create profile for new user
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .insert({
+          pi_user_id: signUpData.user.id,
+          username: piUser.username,
+          rating: 0,
+          completed_tasks: 0,
+        });
+
+      if (profileError) {
+        // If profile creation fails, clean up by deleting the user
+        await supabase.auth.signOut();
+        throw new Error('Failed to create profile');
+      }
+
+      setUser(signUpData.user);
+      return { error: null };
     } catch (err) {
       console.error('Auth error:', err);
       setError(err instanceof Error ? err.message : 'Authentication failed');
