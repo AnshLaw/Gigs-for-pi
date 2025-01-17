@@ -78,7 +78,7 @@ export function useAuth() {
 
       // First, try to sign in
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email: `${piUser.username}@pi.user`,
+        email: `${piUser.username}@gigs.user`,
         password: `PI_${piUser.uid}`,
       });
 
