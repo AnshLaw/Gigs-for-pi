@@ -12,7 +12,7 @@ declare global {
           uid: string;
           username: string;
         };
-        credentials: Array<{
+        credentials?: Array<{
           type: string;
           address: string;
         }>;
@@ -56,17 +56,10 @@ export function useAuth() {
         console.log('Checking for incomplete payments...');
       });
 
+      console.log('Pi auth response:', auth); // Debug log
+
       if (!auth?.user?.username) {
         throw new Error('Failed to get username from Pi Network');
-      }
-
-      // Get wallet address from credentials
-      const walletAddress = auth.credentials?.find(
-        cred => cred.type === 'wallet_address'
-      )?.address;
-
-      if (!walletAddress) {
-        throw new Error('Failed to get wallet address from Pi Network');
       }
 
       // Create email from username
@@ -79,15 +72,22 @@ export function useAuth() {
         password,
       });
 
-      if (!signInError) {
-        // Update wallet address if it changed
-        const { error: updateError } = await supabase
-          .from('profiles')
-          .update({ wallet_address: walletAddress })
-          .eq('pi_user_id', signInData.user.id);
+      // Get wallet address if available
+      const walletAddress = auth.credentials?.find(
+        cred => cred.type === 'wallet_address'
+      )?.address;
 
-        if (updateError) {
-          console.error('Failed to update wallet address:', updateError);
+      if (!signInError) {
+        // If wallet address is available, update it
+        if (walletAddress) {
+          const { error: updateError } = await supabase
+            .from('profiles')
+            .update({ wallet_address: walletAddress })
+            .eq('pi_user_id', signInData.user.id);
+
+          if (updateError) {
+            console.error('Failed to update wallet address:', updateError);
+          }
         }
 
         setUser(signInData.user);
@@ -109,13 +109,13 @@ export function useAuth() {
       if (signUpError) throw signUpError;
       if (!signUpData.user) throw new Error('Failed to create account');
 
-      // Create profile with wallet address
+      // Create profile
       const { error: profileError } = await supabase
         .from('profiles')
         .insert({
           pi_user_id: signUpData.user.id,
           username: auth.user.username,
-          wallet_address: walletAddress,
+          wallet_address: walletAddress, // May be undefined, which is fine
           rating: 0,
           completed_tasks: 0,
         });
