@@ -12,11 +12,18 @@ declare global {
           uid: string;
           username: string;
         };
-        credentials?: Array<{
-          type: string;
-          address: string;
-        }>;
       }>;
+      createPayment: (payment: {
+        amount: number;
+        memo: string;
+        metadata: Record<string, any>;
+      }, callbacks: {
+        onReadyForServerApproval: (paymentId: string) => void;
+        onReadyForServerCompletion: (paymentId: string, txid: string) => void;
+        onCancel: (paymentId: string) => void;
+        onError: (error: Error, payment?: any) => void;
+      }) => Promise<void>;
+      openPaymentDialog: (paymentId: string) => Promise<void>;
     };
   }
 }
@@ -51,12 +58,15 @@ export function useAuth() {
       }
 
       // Authenticate with Pi Network
-      const auth = await window.Pi.authenticate(['username', 'wallet_address'], () => {
-        // Handle incomplete payments if needed
-        console.log('Checking for incomplete payments...');
-      });
+      const auth = await window.Pi.authenticate(
+        ['username', 'payments'], 
+        (payment) => {
+          // Handle incomplete payments if needed
+          console.log('Incomplete payment found:', payment);
+        }
+      );
 
-      console.log('Pi auth response:', auth); // Debug log
+      console.log('Pi auth response:', auth);
 
       if (!auth?.user?.username) {
         throw new Error('Failed to get username from Pi Network');
@@ -72,24 +82,7 @@ export function useAuth() {
         password,
       });
 
-      // Get wallet address if available
-      const walletAddress = auth.credentials?.find(
-        cred => cred.type === 'wallet_address'
-      )?.address;
-
       if (!signInError) {
-        // If wallet address is available, update it
-        if (walletAddress) {
-          const { error: updateError } = await supabase
-            .from('profiles')
-            .update({ wallet_address: walletAddress })
-            .eq('pi_user_id', signInData.user.id);
-
-          if (updateError) {
-            console.error('Failed to update wallet address:', updateError);
-          }
-        }
-
         setUser(signInData.user);
         return;
       }
@@ -115,7 +108,6 @@ export function useAuth() {
         .insert({
           pi_user_id: signUpData.user.id,
           username: auth.user.username,
-          wallet_address: walletAddress, // May be undefined, which is fine
           rating: 0,
           completed_tasks: 0,
         });

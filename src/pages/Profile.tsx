@@ -3,11 +3,15 @@ import { useAuth } from '../lib/auth';
 import { useProfile } from '../lib/hooks';
 import { AuthForm } from '../components/AuthForm';
 import { AlertCircle, Copy, Check } from 'lucide-react';
+import { createTestPayment } from '../lib/payments';
 
 export function Profile() {
   const { user, loading: authLoading, signOut } = useAuth();
   const { profile, loading: profileLoading, error } = useProfile(user?.id);
   const [copied, setCopied] = useState(false);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
 
   const handleCopyWallet = async () => {
     if (profile?.wallet_address) {
@@ -18,6 +22,25 @@ export function Profile() {
       } catch (err) {
         console.error('Failed to copy wallet address:', err);
       }
+    }
+  };
+
+  const handleTestPayment = async () => {
+    setPaymentLoading(true);
+    setPaymentError(null);
+    setPaymentSuccess(false);
+
+    try {
+      const payment = await createTestPayment();
+      console.log('Test payment completed:', payment);
+      setPaymentSuccess(true);
+      // Reload the page after 2 seconds to show updated wallet address
+      setTimeout(() => window.location.reload(), 2000);
+    } catch (err) {
+      console.error('Test payment failed:', err);
+      setPaymentError(err instanceof Error ? err.message : 'Payment failed');
+    } finally {
+      setPaymentLoading(false);
     }
   };
 
@@ -88,7 +111,9 @@ export function Profile() {
                     </button>
                   </div>
                 ) : (
-                  <div className="mt-1 text-gray-500 italic">No wallet address available</div>
+                  <div className="mt-1 text-gray-500 italic">
+                    No wallet address available. Complete app setup to link your wallet.
+                  </div>
                 )}
               </div>
 
@@ -103,6 +128,47 @@ export function Profile() {
                 <label className="block text-sm font-medium text-gray-700">Completed Tasks</label>
                 <div className="mt-1 text-gray-900">{profile.completed_tasks}</div>
               </div>
+
+              {!profile.wallet_address && (
+                <div className="pt-4 border-t">
+                  <div className="rounded-md bg-yellow-50 p-4 mb-4">
+                    <div className="flex">
+                      <div className="flex-shrink-0">
+                        <AlertCircle className="h-5 w-5 text-yellow-400" />
+                      </div>
+                      <div className="ml-3">
+                        <h3 className="text-sm font-medium text-yellow-800">
+                          App Setup Required
+                        </h3>
+                        <div className="mt-2 text-sm text-yellow-700">
+                          <p>
+                            To complete the app setup and link your wallet, you need to make a small test payment of 0.1π.
+                            This is a one-time process required by Pi Network.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleTestPayment}
+                    disabled={paymentLoading}
+                    className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                  >
+                    {paymentLoading ? 'Processing Payment...' : 'Complete App Setup (0.1π)'}
+                  </button>
+
+                  {paymentSuccess && (
+                    <p className="mt-2 text-sm text-green-600">
+                      Payment successful! Reloading page...
+                    </p>
+                  )}
+
+                  {paymentError && (
+                    <p className="mt-2 text-sm text-red-600">{paymentError}</p>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

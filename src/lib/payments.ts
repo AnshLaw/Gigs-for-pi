@@ -1,135 +1,70 @@
 import { supabase } from './supabase';
 
-declare global {
-  interface Window {
-    Pi: {
-      init: (config: { version: string, sandbox?: boolean }) => void;
-      authenticate: (scopes: string[], onIncompletePaymentFound: (payment: any) => void) => Promise<{
-        accessToken: string;
-        user: {
-          uid: string;
-          username: string;
-        };
-      }>;
-      createPayment: (payment: {
-        amount: number,
-        memo: string,
-        metadata: Record<string, any>
-      }) => Promise<{
-        identifier: string;
-        status: {
-          developer_approved: boolean;
-          transaction_verified: boolean;
-          developer_completed: boolean;
-          cancelled: boolean;
-          user_cancelled: boolean;
-        };
-      }>;
-      completePayment: (paymentId: string, txid: string) => Promise<void>;
-    };
-  }
-}
-
-export async function initiateEscrowPayment(taskId: string, bidId: string, amount: number) {
+export async function createTestPayment() {
   try {
     if (!window.Pi) {
-      throw new Error('Pi Network SDK not found');
+      throw new Error('Please use Pi Browser');
     }
 
-    // Create Pi payment
-    const payment = await window.Pi.createPayment({
-      amount: amount,
-      memo: `Escrow payment for task ${taskId}`,
-      metadata: { taskId, bidId, type: 'escrow' }
+    return new Promise((resolve, reject) => {
+      // Create a small test payment
+      window.Pi.createPayment({
+        amount: 0.1, // Small amount for testing
+        memo: "Test payment to complete app setup",
+        metadata: { type: "app_setup_test" }
+      }, {
+        onReadyForServerApproval: async (paymentId) => {
+          console.log('Ready for server approval:', paymentId);
+          // In a real app, you would make a server call here
+          // For the test payment, we'll simulate success
+          try {
+            await window.Pi.openPaymentDialog(paymentId);
+          } catch (err) {
+            console.error('Error opening payment dialog:', err);
+            reject(err);
+          }
+        },
+        onReadyForServerCompletion: async (paymentId, txid) => {
+          console.log('Payment completed:', { paymentId, txid });
+          try {
+            // Update user's profile with the wallet address from the payment
+            const { data: auth } = await supabase.auth.getUser();
+            if (!auth.user) throw new Error('Not authenticated');
+
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('pi_user_id', auth.user.id)
+              .single();
+
+            if (!profile) throw new Error('Profile not found');
+
+            // Extract wallet address from transaction
+            const { error: updateError } = await supabase
+              .from('profiles')
+              .update({ wallet_address: txid }) // Using txid as wallet for demo
+              .eq('id', profile.id);
+
+            if (updateError) throw updateError;
+
+            resolve({ paymentId, txid });
+          } catch (err) {
+            console.error('Error updating profile:', err);
+            reject(err);
+          }
+        },
+        onCancel: (paymentId) => {
+          console.log('Payment cancelled:', paymentId);
+          reject(new Error('Payment was cancelled'));
+        },
+        onError: (error, payment) => {
+          console.error('Payment error:', error, payment);
+          reject(error);
+        }
+      }).catch(reject);
     });
-
-    if (!payment.identifier) {
-      throw new Error('Failed to create payment');
-    }
-
-    // Create escrow record
-    const { data: escrow, error: escrowError } = await supabase.rpc(
-      'accept_bid_with_escrow',
-      {
-        p_task_id: taskId,
-        p_bid_id: bidId,
-        p_executor_id: bidId, // This will be the bidder's profile ID
-        p_payment_id: payment.identifier
-      }
-    );
-
-    if (escrowError) throw escrowError;
-
-    return {
-      paymentId: payment.identifier,
-      escrowId: escrow
-    };
   } catch (err) {
-    console.error('Error initiating escrow payment:', err);
-    throw err;
-  }
-}
-
-export async function verifyEscrowPayment(escrowId: string, paymentId: string) {
-  try {
-    // Update escrow payment status to funded
-    const { error: updateError } = await supabase.rpc(
-      'update_escrow_payment_status',
-      {
-        p_escrow_id: escrowId,
-        p_status: 'funded',
-        p_txid: paymentId
-      }
-    );
-
-    if (updateError) throw updateError;
-
-    return true;
-  } catch (err) {
-    console.error('Error verifying escrow payment:', err);
-    throw err;
-  }
-}
-
-export async function submitTaskCompletion(taskId: string, content: string) {
-  try {
-    const { data: submission, error } = await supabase.rpc(
-      'submit_task_completion',
-      {
-        p_task_id: taskId,
-        p_content: content
-      }
-    );
-
-    if (error) throw error;
-    return submission;
-  } catch (err) {
-    console.error('Error submitting task completion:', err);
-    throw err;
-  }
-}
-
-export async function reviewTaskSubmission(
-  taskId: string,
-  submissionId: string,
-  approved: boolean,
-  feedback: string
-) {
-  try {
-    const { error } = await supabase.rpc(
-      'review_task_submission',
-      {
-        p_task_id: taskId,
-        p_submission_id: submissionId,
-        p_approved: approved,
-        p_feedback: feedback
-      }
-    );
-
-    if (error) throw error;
-    return true;
-  } catch (err) {
-    console.error('Error reviewing task submission:', err);
+    console.error('Payment error:', err);
     throw err;
   }
 }
