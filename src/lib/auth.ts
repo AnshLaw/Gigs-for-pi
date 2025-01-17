@@ -97,22 +97,30 @@ export function useAuth() {
         console.log('Sign in successful');
         setUser(signInData.user);
 
-        // Update wallet address if available
+        // Update wallet address if available and changed
         if (piUser.walletAddress && signInData.user) {
-          const { error: updateError } = await supabase
+          const { data: profile } = await supabase
             .from('profiles')
-            .update({ wallet_address: piUser.walletAddress })
-            .eq('pi_user_id', signInData.user.id);
+            .select('wallet_address')
+            .eq('pi_user_id', signInData.user.id)
+            .single();
 
-          if (updateError) {
-            console.error('Failed to update wallet address:', updateError);
+          if (profile?.wallet_address !== piUser.walletAddress) {
+            const { error: updateError } = await supabase
+              .from('profiles')
+              .update({ wallet_address: piUser.walletAddress })
+              .eq('pi_user_id', signInData.user.id);
+
+            if (updateError) {
+              console.error('Failed to update wallet address:', updateError);
+            }
           }
         }
 
         return { error: null };
       }
 
-      // If sign in fails, create new account
+      // If sign in fails, try to create new account
       console.log('Sign in failed, creating new account...');
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email,
@@ -127,7 +135,7 @@ export function useAuth() {
 
       if (signUpError) {
         console.error('Sign up error:', signUpError);
-        throw new Error('Unable to authenticate. Please try again.');
+        throw new Error('Unable to create account. Please try again.');
       }
 
       if (!signUpData.user) {
@@ -148,8 +156,9 @@ export function useAuth() {
 
       if (profileError) {
         console.error('Profile creation error:', profileError);
+        // Clean up the created auth user if profile creation fails
         await supabase.auth.signOut();
-        throw new Error('Failed to create profile');
+        throw new Error('Failed to create profile. Please try again.');
       }
 
       console.log('Account created successfully');

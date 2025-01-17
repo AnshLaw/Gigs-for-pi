@@ -1,12 +1,25 @@
-import React from 'react';
+import { useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { useProfile } from '../lib/hooks';
 import { AuthForm } from '../components/AuthForm';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Copy, Check } from 'lucide-react';
 
 export function Profile() {
   const { user, loading: authLoading, signOut } = useAuth();
   const { profile, loading: profileLoading, error } = useProfile(user?.id);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyWallet = async () => {
+    if (profile?.wallet_address) {
+      try {
+        await navigator.clipboard.writeText(profile.wallet_address);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy wallet address:', err);
+      }
+    }
+  };
 
   if (!user) {
     return <AuthForm />;
@@ -42,16 +55,55 @@ export function Profile() {
           </button>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-6">
           <div>
             <label className="block text-sm font-medium text-gray-700">Email</label>
             <div className="mt-1 text-gray-900">{user.email}</div>
           </div>
+
           {profile && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Username</label>
-              <div className="mt-1 text-gray-900">{profile.username}</div>
-            </div>
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Username</label>
+                <div className="mt-1 text-gray-900">{profile.username}</div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Wallet Address</label>
+                {profile.wallet_address ? (
+                  <div className="mt-1 flex items-center gap-2">
+                    <code className="flex-1 block p-2 text-sm bg-gray-50 rounded border border-gray-200 font-mono text-gray-800 break-all">
+                      {profile.wallet_address}
+                    </code>
+                    <button
+                      onClick={handleCopyWallet}
+                      className="p-2 text-gray-500 hover:text-gray-700 rounded-md hover:bg-gray-100"
+                      title="Copy wallet address"
+                    >
+                      {copied ? (
+                        <Check className="h-5 w-5 text-green-500" />
+                      ) : (
+                        <Copy className="h-5 w-5" />
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-1 text-gray-500 italic">No wallet address available</div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Rating</label>
+                <div className="mt-1 text-gray-900">
+                  {profile.rating.toFixed(1)} / 5.0
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Completed Tasks</label>
+                <div className="mt-1 text-gray-900">{profile.completed_tasks}</div>
+              </div>
+            </>
           )}
         </div>
       </div>

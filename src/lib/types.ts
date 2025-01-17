@@ -6,6 +6,7 @@ export interface Profile {
   username: string;
   rating: number;
   completed_tasks: number;
+  wallet_address?: string;
 }
 
 export interface TaskAttachment {
