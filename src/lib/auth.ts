@@ -80,51 +80,52 @@ export function useAuth() {
       const email = `${piUser.username}@gigs.user`;
       const password = `PI_${piUser.uid}`;
 
-      // Try to sign in first
+      // Try to sign in
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
+      // If sign in succeeds, we're done
       if (!signInError) {
         setUser(signInData.user);
         return { error: null };
       }
 
-      // If sign in fails with invalid credentials, try to sign up
-      if (signInError.message.includes('Invalid login credentials')) {
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              username: piUser.username,
-              pi_uid: piUser.uid,
-            },
+      // If sign in fails, create a new account
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            username: piUser.username,
+            pi_uid: piUser.uid,
           },
-        });
+        },
+      });
 
-        if (signUpError) {
-          // If user already exists, try signing in one more time
-          if (signUpError.message.includes('User already registered')) {
-            const { data: finalSignInData, error: finalSignInError } = await supabase.auth.signInWithPassword({
-              email,
-              password,
-            });
+      // Handle sign up errors
+      if (signUpError) {
+        // If user exists, force sign in
+        if (signUpError.message.includes('User already registered')) {
+          const { data: forceSignInData, error: forceSignInError } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
 
-            if (!finalSignInError) {
-              setUser(finalSignInData.user);
-              return { error: null };
-            }
+          if (forceSignInError) {
+            throw new Error('Unable to sign in. Please try again.');
           }
-          throw signUpError;
+
+          setUser(forceSignInData.user);
+          return { error: null };
         }
 
-        if (!signUpData.user) {
-          throw new Error('Failed to create account');
-        }
+        throw signUpError;
+      }
 
-        // Create user profile
+      // If we have a new user, create their profile
+      if (signUpData.user) {
         const { error: profileError } = await supabase
           .from('profiles')
           .insert({
@@ -144,7 +145,7 @@ export function useAuth() {
         return { error: null };
       }
 
-      throw signInError;
+      throw new Error('Failed to authenticate');
     } catch (err) {
       console.error('Auth error:', err);
       setError(err instanceof Error ? err.message : 'Authentication failed');
