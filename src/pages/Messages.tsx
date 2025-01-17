@@ -2,15 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { Send, Paperclip, X, Download, Menu, MessageCircle } from 'lucide-react';
-import type { RealtimeChannel, CustomFileOptions } from '../lib/types/supabase';
-
-interface Attachment {
-  id: string;
-  file_name: string;
-  file_type: string;
-  file_path: string;
-  file_size: number;
-}
+import type { Attachment, CustomFileOptions, RealtimeChannel } from '../lib/types/supabase';
 
 interface Message {
   id: string;
@@ -21,7 +13,13 @@ interface Message {
     username: string;
   };
   sender_id: string;
-  attachments?: Attachment[];
+  attachments?: {
+    id: string;
+    file_name: string;
+    file_type: string;
+    file_path: string;
+    file_size: number;
+  }[];
 }
 
 interface Task {
@@ -29,7 +27,6 @@ interface Task {
   title: string;
   creator_id: string;
   executor_id: string;
-  created_at: string;
 }
 
 export function Messages() {
@@ -72,11 +69,71 @@ export function Messages() {
     scrollToBottom();
   }, [messages]);
 
+  const fetchUserProfile = async () => {
+    if (!user) return;
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('pi_user_id', user.id)
+      .single();
+
+    setUserProfile(profile);
+  };
+
+  const fetchTasks = async () => {
+    if (!user) return;
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('pi_user_id', user.id)
+      .single();
+
+    if (profile) {
+      const { data: tasksData } = await supabase
+        .from('tasks')
+        .select('*')
+        .or(`creator_id.eq.${profile.id},executor_id.eq.${profile.id}`)
+        .eq('status', 'in_progress');
+
+      setTasks(tasksData || []);
+      
+      if (tasksData?.length && !selectedTask) {
+        setSelectedTask(tasksData[0].id);
+      }
+    }
+  };
+
+  const fetchMessages = async () => {
+    const { data: messagesData } = await supabase
+      .from('messages')
+      .select(`
+        *,
+        sender:profiles!messages_sender_id_fkey (
+          username
+        ),
+        attachments (
+          id,
+          file_name,
+          file_type,
+          file_path,
+          file_size
+        )
+      `)
+      .eq('task_id', selectedTask)
+      .order('created_at', { ascending: true });
+
+    setMessages(messagesData || []);
+  };
+
   const setupRealtimeSubscription = () => {
+    // Unsubscribe from previous channel if it exists
     if (channelRef.current) {
       channelRef.current.unsubscribe();
     }
 
+    // Create a new channel for the selected task
     const channel = supabase.channel(`messages:${selectedTask}`)
       .on(
         'postgres_changes',
@@ -116,6 +173,7 @@ export function Messages() {
       )
       .subscribe();
 
+    // Store the channel reference
     channelRef.current = channel;
   };
 
@@ -123,64 +181,10 @@ export function Messages() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const fetchUserProfile = async () => {
-    if (!user) return;
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('pi_user_id', user.id)
-      .single();
-
-    setUserProfile(profile);
-  };
-
-  const fetchTasks = async () => {
-    if (!user) return;
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('pi_user_id', user.id)
-      .single();
-
-    if (profile) {
-      const { data: tasksData } = await supabase
-        .from('tasks')
-        .select('*')
-        .or(`creator_id.eq.${profile.id},executor_id.eq.${profile.id}`)
-        .eq('status', 'in_progress')
-        .order('created_at', { ascending: false });
-
-      setTasks(tasksData || []);
-      
-      if (tasksData?.length && !selectedTask) {
-        setSelectedTask(tasksData[0].id);
-      }
-    }
-  };
-
-  const fetchMessages = async () => {
-    const { data: messagesData } = await supabase
-      .from('messages')
-      .select(`
-        *,
-        sender:profiles!messages_sender_id_fkey (
-          username
-        ),
-        attachments (
-          id,
-          file_name,
-          file_type,
-          file_path,
-          file_size
-        )
-      `)
-      .eq('task_id', selectedTask)
-      .order('created_at', { ascending: true });
-
-    setMessages(messagesData || []);
-    scrollToBottom();
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
   const handleDownload = async (attachment: Attachment) => {
@@ -217,18 +221,18 @@ export function Messages() {
       let filePath: string | undefined;
       
       if (selectedFile) {
-        const fileExt = selectedFile.name.split('.').pop();
+        const fileExt = selectedFile.name.split('.').pop() || '';
         const fileName = `${Math.random()}.${fileExt}`;
 
-        const uploadOptions: CustomFileOptions = {
+        const options: CustomFileOptions = {
           onUploadProgress: (progress) => {
             setUploadProgress((progress.loaded / progress.total) * 100);
-          },
+          }
         };
 
         const { error: uploadError } = await supabase.storage
           .from('attachments')
-          .upload(fileName, selectedFile, uploadOptions);
+          .upload(fileName, selectedFile, options);
 
         if (uploadError) throw uploadError;
         filePath = fileName;
@@ -252,8 +256,8 @@ export function Messages() {
 
       if (messageError) throw messageError;
 
-      // If there's a file, create the attachment
-       if (filePath && newMessage && selectedFile) {
+      // If there's a file and it was uploaded successfully
+      if (filePath && newMessage && selectedFile) {
         const { error: attachmentError } = await supabase
           .from('attachments')
           .insert({
@@ -307,12 +311,6 @@ export function Messages() {
     }
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-  };
-
   if (!user) {
     return (
       <div className="text-center py-12">
@@ -323,64 +321,54 @@ export function Messages() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <div className="relative flex h-[calc(100vh-12rem)]">
+      <div className="flex gap-4 h-[calc(100vh-12rem)]">
         {/* Mobile menu button */}
         <button
           onClick={() => setShowSidebar(!showSidebar)}
-          className="md:hidden fixed top-4 left-4 z-50 p-2 bg-white rounded-md shadow-md"
+          className="fixed top-20 left-4 p-2 bg-white rounded-full shadow-lg md:hidden z-50"
         >
-          <Menu className="h-5 w-5 text-gray-600" />
+          {showSidebar ? (
+            <X className="h-6 w-6 text-gray-600" />
+          ) : (
+            <Menu className="h-6 w-6 text-gray-600" />
+          )}
         </button>
 
         {/* Tasks Sidebar */}
-        <div
-          className={`
-            fixed md:relative inset-y-0 left-0 z-40 w-64 bg-white shadow-md transform transition-transform duration-200 ease-in-out
-            ${showSidebar ? 'translate-x-0' : '-translate-x-full'}
-            md:translate-x-0 md:static md:inset-auto
-          `}
-        >
-          <div className="flex flex-col h-full">
-            <div className="p-4 border-b">
-              <h2 className="font-semibold text-gray-900">Active Tasks</h2>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              {tasks.map((task) => (
-                <button
-                  key={task.id}
-                  onClick={() => {
-                    setSelectedTask(task.id);
-                    setShowSidebar(false);
-                  }}
-                  className={`w-full text-left p-4 hover:bg-gray-50 transition-colors ${
-                    selectedTask === task.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''
-                  }`}
-                >
-                  <h3 className="font-medium text-gray-900 truncate">{task.title}</h3>
-                  <p className="text-sm text-gray-500 mt-1">
-                    {new Date(task.created_at).toLocaleDateString()}
-                  </p>
-                </button>
-              ))}
-              {tasks.length === 0 && (
-                <div className="p-4 text-sm text-gray-500 text-center">
-                  No active tasks found
-                </div>
-              )}
-            </div>
+        <div className={`
+          fixed md:relative inset-y-0 left-0 z-40 w-64 bg-white shadow-md 
+          transform transition-transform duration-300 ease-in-out
+          ${showSidebar ? 'translate-x-0' : '-translate-x-full'}
+          md:translate-x-0
+        `}>
+          <div className="p-4 border-b">
+            <h2 className="font-semibold text-gray-900">Active Tasks</h2>
+          </div>
+          <div className="overflow-y-auto h-full">
+            {tasks.map((task) => (
+              <button
+                key={task.id}
+                onClick={() => {
+                  setSelectedTask(task.id);
+                  setShowSidebar(false);
+                }}
+                className={`w-full text-left p-4 hover:bg-gray-50 transition-colors ${
+                  selectedTask === task.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''
+                }`}
+              >
+                <h3 className="font-medium text-gray-900 truncate">{task.title}</h3>
+              </button>
+            ))}
+            {tasks.length === 0 && (
+              <div className="p-4 text-sm text-gray-500 text-center">
+                No active tasks found
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Overlay for mobile */}
-        {showSidebar && (
-          <div
-            className="fixed inset-0 bg-black bg-opacity-50 z-30 md:hidden"
-            onClick={() => setShowSidebar(false)}
-          />
-        )}
-
         {/* Messages Area */}
-        <div className="flex-1 bg-white shadow-md rounded-lg overflow-hidden">
+        <div className="flex-1 bg-white shadow-md rounded-lg overflow-hidden ml-0 md:ml-0">
           {selectedTask ? (
             <div className="h-full flex flex-col">
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
