@@ -330,79 +330,65 @@ export function Messages() {
   return (
     <div className="max-w-6xl mx-auto">
       <div className="relative flex h-[calc(100vh-12rem)]">
-        {/* Overlay for mobile when sidebar is open */}
+        {/* Mobile menu button */}
+        <button
+          onClick={() => setShowSidebar(!showSidebar)}
+          className="md:hidden fixed top-4 left-4 z-50 p-2 bg-white rounded-md shadow-md"
+        >
+          <Menu className="h-5 w-5 text-gray-600" />
+        </button>
+
+        {/* Tasks Sidebar */}
+        <div
+          className={`
+            fixed md:relative inset-y-0 left-0 z-40 w-64 bg-white shadow-md transform transition-transform duration-200 ease-in-out
+            ${showSidebar ? 'translate-x-0' : '-translate-x-full'}
+            md:translate-x-0 md:static md:inset-auto
+          `}
+        >
+          <div className="flex flex-col h-full">
+            <div className="p-4 border-b">
+              <h2 className="font-semibold text-gray-900">Active Tasks</h2>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {tasks.map((task) => (
+                <button
+                  key={task.id}
+                  onClick={() => {
+                    setSelectedTask(task.id);
+                    setShowSidebar(false);
+                  }}
+                  className={`w-full text-left p-4 hover:bg-gray-50 transition-colors ${
+                    selectedTask === task.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''
+                  }`}
+                >
+                  <h3 className="font-medium text-gray-900 truncate">{task.title}</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {new Date(task.created_at).toLocaleDateString()}
+                  </p>
+                </button>
+              ))}
+              {tasks.length === 0 && (
+                <div className="p-4 text-sm text-gray-500 text-center">
+                  No active tasks found
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Overlay for mobile */}
         {showSidebar && (
-          <div 
+          <div
             className="fixed inset-0 bg-black bg-opacity-50 z-30 md:hidden"
             onClick={() => setShowSidebar(false)}
           />
         )}
 
-        {/* Mobile menu button */}
-        <button
-          onClick={() => setShowSidebar(!showSidebar)}
-          className="md:hidden fixed top-20 left-4 z-50 p-2 bg-white rounded-md shadow-md hover:bg-gray-50"
-          aria-label="Toggle sidebar"
-        >
-          <Menu className="h-6 w-6 text-gray-600" />
-        </button>
-
-        {/* Tasks Sidebar */}
-        <div 
-          className={`
-            w-80 bg-white shadow-lg rounded-lg overflow-hidden flex-shrink-0
-            fixed md:relative inset-y-0 left-0 z-40
-            transform transition-transform duration-200 ease-in-out
-            ${showSidebar ? 'translate-x-0' : '-translate-x-full'}
-            md:translate-x-0
-          `}
-        >
-          <div className="sticky top-0 bg-white z-10 p-4 border-b flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-              <MessageCircle className="h-5 w-5 text-indigo-600" />
-              Active Tasks
-            </h2>
-            <button
-              onClick={() => setShowSidebar(false)}
-              className="md:hidden p-2 text-gray-500 hover:text-gray-700 rounded-md hover:bg-gray-100"
-              aria-label="Close sidebar"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-          <div className="overflow-y-auto h-[calc(100%-4rem)]">
-            {tasks.map((task) => (
-              <button
-                key={task.id}
-                onClick={() => {
-                  setSelectedTask(task.id);
-                  setShowSidebar(false);
-                }}
-                className={`
-                  w-full text-left p-4 hover:bg-gray-50 transition-colors
-                  border-l-4 border-transparent
-                  ${selectedTask === task.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''}
-                `}
-              >
-                <h3 className="font-medium text-gray-900 truncate mb-1">{task.title}</h3>
-                <p className="text-sm text-gray-500">
-                  {new Date(task.created_at).toLocaleDateString()}
-                </p>
-              </button>
-            ))}
-            {tasks.length === 0 && (
-              <div className="p-4 text-sm text-gray-500 text-center">
-                <p>No active tasks found</p>
-              </div>
-            )}
-          </div>
-        </div>
-
         {/* Messages Area */}
-        <div className="flex-1 bg-white shadow-md rounded-lg overflow-hidden md:ml-4 ml-12">
+        <div className="flex-1 bg-white shadow-md rounded-lg overflow-hidden">
           {selectedTask ? (
             <div className="h-full flex flex-col">
-              {/* Messages container */}
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {messages.map((message) => (
                   <div
@@ -412,12 +398,11 @@ export function Messages() {
                     }`}
                   >
                     <div
-                      className={`
-                        max-w-[80%] rounded-lg px-4 py-2
-                        ${message.sender_id === userProfile?.id
+                      className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                        message.sender_id === userProfile?.id
                           ? 'bg-indigo-600 text-white'
-                          : 'bg-gray-100 text-gray-900'}
-                      `}
+                          : 'bg-gray-100 text-gray-900'
+                      }`}
                     >
                       <div className="text-sm font-medium mb-1">
                         {message.sender.username}
@@ -453,8 +438,7 @@ export function Messages() {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Message input */}
-              <div className="p-4 border-t bg-white">
+              <div className="p-4 border-t">
                 {error && (
                   <div className="mb-4 text-sm text-red-600 bg-red-50 rounded p-2">
                     {error}
@@ -490,7 +474,7 @@ export function Messages() {
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="p-2 text-gray-500 hover:text-gray-700 rounded-full hover:bg-gray-100"
+                      className="p-2 text-gray-500 hover:text-gray-700"
                     >
                       <Paperclip className="h-5 w-5" />
                     </button>
@@ -520,7 +504,7 @@ export function Messages() {
                             fileInputRef.current.value = '';
                           }
                         }}
-                        className="p-1.5 text-gray-500 hover:text-gray-700 rounded-full hover:bg-gray-100"
+                        className="text-gray-500 hover:text-gray-700"
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -540,7 +524,7 @@ export function Messages() {
           ) : (
             <div className="h-full flex items-center justify-center">
               <div className="text-center text-gray-500">
-                <MessageCircle className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                <MessageCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p>Select a task to view messages</p>
               </div>
             </div>
