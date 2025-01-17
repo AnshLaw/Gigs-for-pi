@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { Link } from 'react-router-dom';
@@ -76,7 +76,7 @@ export function Tasks() {
       setTasks(filteredTasks);
     } catch (err) {
       console.error('Error fetching tasks:', err);
-      setError('Failed to load gigs. Please try again.');
+      setError(err instanceof Error ? err.message : 'Failed to load gigs');
     } finally {
       setLoading(false);
     }
@@ -84,7 +84,7 @@ export function Tasks() {
 
   useEffect(() => {
     fetchTasks();
-  }, [searchQuery, filters.minPayment, filters.maxPayment, filters.status]);
+  }, [searchQuery, filters.minPayment, filters.maxPayment, filters.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
@@ -111,12 +111,12 @@ export function Tasks() {
 
   return (
     <div className="max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Available Gigs</h1>
         {user && (
           <Link
             to="/create-task"
-            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
+            className="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-center"
           >
             Post a Gig
           </Link>
@@ -124,7 +124,7 @@ export function Tasks() {
       </div>
 
       <div className="mb-6 space-y-4">
-        <div className="flex gap-4">
+        <div className="flex flex-col sm:flex-row gap-4">
           <div className="flex-1 relative">
             <input
               type="text"
@@ -137,7 +137,7 @@ export function Tasks() {
           </div>
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className="px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 flex items-center gap-2"
+            className="w-full sm:w-auto px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 flex items-center justify-center gap-2"
           >
             <SlidersHorizontal className="h-5 w-5" />
             Filters
@@ -146,7 +146,7 @@ export function Tasks() {
 
         {showFilters && (
           <div className="p-4 bg-white rounded-md shadow-sm border border-gray-200 space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label htmlFor="minPayment" className="block text-sm font-medium text-gray-700">
                   Min Payment (π)
@@ -193,7 +193,7 @@ export function Tasks() {
         )}
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
         {tasks.map((task) => (
           <Link
             key={task.id}
@@ -238,11 +238,17 @@ export function Tasks() {
 
       {tasks.length === 0 && (
         <div className="text-center py-12">
-          <p className="text-gray-500">No gigs available at the moment.</p>
-          {user && (
+          <AlertCircle className="mx-auto h-12 w-12 text-gray-400" />
+          <h3 className="mt-2 text-sm font-medium text-gray-900">No gigs found</h3>
+          <p className="mt-1 text-sm text-gray-500">
+            {searchQuery || filters.minPayment || filters.maxPayment || filters.status
+              ? 'Try adjusting your filters'
+              : 'No gigs available at the moment.'}
+          </p>
+          {user && !searchQuery && !filters.minPayment && !filters.maxPayment && !filters.status && (
             <Link
               to="/create-task"
-              className="text-indigo-600 hover:text-indigo-500 font-medium mt-2 inline-block"
+              className="mt-4 inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
             >
               Be the first to post a gig
             </Link>
