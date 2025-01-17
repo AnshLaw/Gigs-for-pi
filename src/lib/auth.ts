@@ -64,11 +64,15 @@ export function useAuth() {
         throw new Error('Pi Network SDK not found');
       }
 
+      // Initialize Pi SDK
+      window.Pi.init({ version: "2.0", sandbox: true });
+
       // Authenticate with Pi Network
       console.log('Starting Pi authentication...');
-      const auth = await window.Pi.authenticate(['username', 'payments'], () => {
-        console.log('Incomplete payment found!');
-      }).catch(err => {
+      const auth = await window.Pi.authenticate(
+        ['username', 'payments', 'wallet_address'],
+        () => console.log('Incomplete payment found!')
+      ).catch(err => {
         console.error('Pi authenticate error:', err);
         throw new Error('Failed to authenticate with Pi Network');
       });
@@ -80,14 +84,16 @@ export function useAuth() {
         throw new Error('Failed to authenticate with Pi Network');
       }
 
-      // For sandbox, we'll use a consistent password format
-      const sandboxPassword = `SANDBOX_${piUser.uid}_${accessToken.slice(-8)}`;
+      // Format username as a valid email
+      const formattedEmail = `${piUser.username}@gigs.user`;
 
-      console.log('Attempting Supabase sign in...');
+      // Generate a deterministic password based on Pi user data
+      const password = `PI_${piUser.uid}_${accessToken.slice(-8)}`;
+
       // Try to sign in first
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email: `${piUser.username}@pi-sandbox.user`,
-        password: sandboxPassword,
+        email: formattedEmail,
+        password,
       });
 
       if (!signInError) {
@@ -99,8 +105,8 @@ export function useAuth() {
       // If sign in fails, try to sign up
       console.log('Sign in failed, attempting sign up...');
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: `${piUser.username}@pi-sandbox.user`,
-        password: sandboxPassword,
+        email: formattedEmail,
+        password,
         options: {
           data: {
             pi_uid: piUser.uid,
@@ -109,25 +115,11 @@ export function useAuth() {
         },
       });
 
-      // If sign up returns a user but also an error about email confirmation,
-      // this means the user exists but needs to sign in
-      if (signUpError?.message?.includes('User already registered')) {
-        console.log('User exists, trying to sign in again...');
-        const { data: finalSignInData, error: finalSignInError } = await supabase.auth.signInWithPassword({
-          email: `${piUser.username}@pi-sandbox.user`,
-          password: sandboxPassword,
-        });
-
-        if (finalSignInError) {
-          throw finalSignInError;
-        }
-
-        setUser(finalSignInData.user);
-        return { error: null };
-      }
-
       if (signUpError) {
-        console.error('Sign up error:', signUpError);
+        // If user already exists but sign in failed, something is wrong
+        if (signUpError.message?.includes('User already registered')) {
+          throw new Error('Authentication failed. Please try again.');
+        }
         throw signUpError;
       }
 
@@ -135,8 +127,7 @@ export function useAuth() {
         throw new Error('Failed to create user account');
       }
 
-      console.log('Creating profile...');
-      // Create profile
+      // Create profile for new user
       const { error: profileError } = await supabase
         .from('profiles')
         .insert({
@@ -148,7 +139,6 @@ export function useAuth() {
 
       if (profileError) {
         console.error('Profile creation error:', profileError);
-        // If profile creation fails, delete the user
         await supabase.auth.signOut();
         throw new Error('Failed to create profile');
       }
