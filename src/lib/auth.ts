@@ -11,11 +11,11 @@ declare global {
         user: {
           uid: string;
           username: string;
-          credentials: Array<{
-            type: string;
-            address: string;
-          }>;
         };
+        credentials: Array<{
+          type: string;
+          address: string;
+        }>;
       }>;
     };
   }
@@ -61,7 +61,7 @@ export function useAuth() {
       }
 
       // Get wallet address from credentials
-      const walletAddress = auth.user.credentials?.find(
+      const walletAddress = auth.credentials?.find(
         cred => cred.type === 'wallet_address'
       )?.address;
 
