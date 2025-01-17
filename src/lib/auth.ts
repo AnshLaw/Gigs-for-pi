@@ -11,24 +11,12 @@ declare global {
         user: {
           uid: string;
           username: string;
-          walletAddress?: string;
+          credentials: Array<{
+            type: string;
+            address: string;
+          }>;
         };
       }>;
-      createPayment: (payment: {
-        amount: number,
-        memo: string,
-        metadata: Record<string, any>
-      }) => Promise<{
-        identifier: string;
-        status: {
-          developer_approved: boolean;
-          transaction_verified: boolean;
-          developer_completed: boolean;
-          cancelled: boolean;
-          user_cancelled: boolean;
-        };
-      }>;
-      completePayment: (paymentId: string, txid: string) => Promise<void>;
     };
   }
 }
@@ -48,7 +36,7 @@ export function useAuth() {
     // Listen for auth changes
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       setLoading(false);
     });
@@ -65,63 +53,66 @@ export function useAuth() {
         throw new Error('Pi Network SDK not found');
       }
 
+      // Initialize Pi SDK
+      window.Pi.init({ version: "2.0", sandbox: true });
+
       // Authenticate with Pi Network
-      console.log('Starting Pi authentication...');
-      const auth = await window.Pi.authenticate(
-        ['username', 'payments', 'wallet_address'],
-        () => {}
-      ).catch(err => {
-        console.error('Pi authenticate error:', err);
+      const auth = await window.Pi.authenticate(['username', 'payments', 'wallet_address'], () => {});
+      
+      if (!auth?.user) {
         throw new Error('Failed to authenticate with Pi Network');
-      });
-
-      console.log('Pi auth response:', auth);
-      const { user: piUser } = auth;
-
-      if (!piUser?.username) {
-        throw new Error('Failed to get Pi username');
       }
 
-      // Generate consistent credentials
-      const email = `${piUser.username}@gigs.user`;
-      const password = `GIGS_${piUser.uid}_${auth.accessToken.slice(-8)}`;
+      const { user: piUser } = auth;
+      
+      // Find the wallet credential
+      const walletCredential = Array.isArray(piUser.credentials) 
+        ? piUser.credentials.find(cred => cred.type === 'wallet_address')
+        : null;
+      
+      const walletAddress = walletCredential?.address;
 
-      // Try to sign in first
-      console.log('Attempting sign in...');
+      console.log('Pi auth response:', {
+        username: piUser.username,
+        uid: piUser.uid,
+        walletAddress,
+        credentials: piUser.credentials
+      });
+
+      if (!walletAddress) {
+        throw new Error('Wallet address not available. Please ensure you have a Pi wallet.');
+      }
+
+      // Create credentials
+      const email = `${piUser.username}@gigs.user`;
+      const password = `GIGS_${piUser.uid}`;
+
+      // Try to sign in
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (!signInError) {
-        console.log('Sign in successful');
-        setUser(signInData.user);
+        // Update wallet address if it changed
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('wallet_address')
+          .eq('pi_user_id', signInData.user.id)
+          .single();
 
-        // Update wallet address if available and changed
-        if (piUser.walletAddress && signInData.user) {
-          const { data: profile } = await supabase
+        if (existingProfile && existingProfile.wallet_address !== walletAddress) {
+          await supabase
             .from('profiles')
-            .select('wallet_address')
-            .eq('pi_user_id', signInData.user.id)
-            .single();
-
-          if (profile?.wallet_address !== piUser.walletAddress) {
-            const { error: updateError } = await supabase
-              .from('profiles')
-              .update({ wallet_address: piUser.walletAddress })
-              .eq('pi_user_id', signInData.user.id);
-
-            if (updateError) {
-              console.error('Failed to update wallet address:', updateError);
-            }
-          }
+            .update({ wallet_address: walletAddress })
+            .eq('pi_user_id', signInData.user.id);
         }
 
+        setUser(signInData.user);
         return { error: null };
       }
 
-      // If sign in fails, try to create new account
-      console.log('Sign in failed, creating new account...');
+      // If sign in fails, create new account
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
@@ -129,39 +120,23 @@ export function useAuth() {
           data: {
             username: piUser.username,
             pi_uid: piUser.uid,
+            wallet_address: walletAddress,
           },
         },
       });
 
-      if (signUpError) {
-        console.error('Sign up error:', signUpError);
-        throw new Error('Unable to create account. Please try again.');
-      }
+      if (signUpError) throw signUpError;
+      if (!signUpData.user) throw new Error('Failed to create account');
 
-      if (!signUpData.user) {
-        throw new Error('Failed to create account');
-      }
-
-      console.log('Creating profile...');
       // Create profile
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert({
-          pi_user_id: signUpData.user.id,
-          username: piUser.username,
-          wallet_address: piUser.walletAddress,
-          rating: 0,
-          completed_tasks: 0,
-        });
+      await supabase.from('profiles').insert({
+        pi_user_id: signUpData.user.id,
+        username: piUser.username,
+        wallet_address: walletAddress,
+        rating: 0,
+        completed_tasks: 0,
+      });
 
-      if (profileError) {
-        console.error('Profile creation error:', profileError);
-        // Clean up the created auth user if profile creation fails
-        await supabase.auth.signOut();
-        throw new Error('Failed to create profile. Please try again.');
-      }
-
-      console.log('Account created successfully');
       setUser(signUpData.user);
       return { error: null };
     } catch (err) {
