@@ -78,7 +78,7 @@ export function useAuth() {
 
       // First, try to sign in
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email: `${piUser.username}@gigs.user`,
+        email: `${piUser.username}@pi.user`,
         password: `PI_${piUser.uid}`,
       });
 
@@ -89,7 +89,7 @@ export function useAuth() {
 
       // If sign in fails, try to create a new account
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: `${piUser.username}@gigs.user`,
+        email: `${piUser.username}@pi.user`,
         password: `PI_${piUser.uid}`,
         options: {
           data: {
