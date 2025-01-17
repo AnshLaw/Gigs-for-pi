@@ -11,7 +11,7 @@ declare global {
         user: {
           uid: string;
           username: string;
-          credentials: Array<{
+          credentials?: Array<{
             type: string;
             address: string;
           }>;
@@ -80,16 +80,15 @@ export function useAuth() {
       console.log('Pi auth successful:', piUser);
 
       // Find the wallet credential
-      const walletCredential = Array.isArray(piUser.credentials) 
-        ? piUser.credentials.find(cred => cred.type === 'wallet_address')
-        : null;
-      
-      const walletAddress = walletCredential?.address;
-      console.log('Wallet credential:', walletCredential);
-
-      if (!walletAddress) {
-        throw new Error('Wallet address not available. Please ensure you have a Pi wallet.');
+      let walletAddress = null;
+      if (piUser.credentials && Array.isArray(piUser.credentials)) {
+        const walletCred = piUser.credentials.find(cred => cred.type === 'wallet_address');
+        if (walletCred) {
+          walletAddress = walletCred.address;
+        }
       }
+
+      console.log('Wallet address:', walletAddress);
 
       // Create credentials
       const email = `${piUser.username}@gigs.user`;
@@ -105,18 +104,16 @@ export function useAuth() {
       if (!signInError) {
         console.log('Sign in successful');
         
-        // Update wallet address if it changed
-        const { data: existingProfile } = await supabase
-          .from('profiles')
-          .select('wallet_address')
-          .eq('pi_user_id', signInData.user.id)
-          .single();
-
-        if (existingProfile && existingProfile.wallet_address !== walletAddress) {
-          await supabase
+        // Update wallet address if available
+        if (walletAddress) {
+          const { error: updateError } = await supabase
             .from('profiles')
             .update({ wallet_address: walletAddress })
             .eq('pi_user_id', signInData.user.id);
+
+          if (updateError) {
+            console.error('Failed to update wallet address:', updateError);
+          }
         }
 
         setUser(signInData.user);
@@ -132,7 +129,6 @@ export function useAuth() {
           data: {
             username: piUser.username,
             pi_uid: piUser.uid,
-            wallet_address: walletAddress,
           },
         },
       });
@@ -142,13 +138,22 @@ export function useAuth() {
 
       // Create profile
       console.log('Creating profile...');
-      await supabase.from('profiles').insert({
-        pi_user_id: signUpData.user.id,
-        username: piUser.username,
-        wallet_address: walletAddress,
-        rating: 0,
-        completed_tasks: 0,
-      });
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .insert({
+          pi_user_id: signUpData.user.id,
+          username: piUser.username,
+          wallet_address: walletAddress,
+          rating: 0,
+          completed_tasks: 0,
+        });
+
+      if (profileError) {
+        console.error('Failed to create profile:', profileError);
+        // Clean up the created auth user if profile creation fails
+        await supabase.auth.signOut();
+        throw new Error('Failed to create profile');
+      }
 
       setUser(signUpData.user);
       return { error: null };
