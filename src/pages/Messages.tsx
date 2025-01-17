@@ -2,7 +2,15 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
 import { Send, Paperclip, X, Download, Menu, MessageCircle } from 'lucide-react';
-import type { FileOptions } from '@supabase/storage-js';
+import type { RealtimeChannel, CustomFileOptions } from '../lib/types/supabase';
+
+interface Attachment {
+  id: string;
+  file_name: string;
+  file_type: string;
+  file_path: string;
+  file_size: number;
+}
 
 interface Message {
   id: string;
@@ -13,30 +21,15 @@ interface Message {
     username: string;
   };
   sender_id: string;
-  attachments?: {
-    id: string;
-    file_name: string;
-    file_type: string;
-    file_path: string;
-    file_size: number;
-  }[];
+  attachments?: Attachment[];
 }
 
 interface Task {
   id: string;
   title: string;
-  created_at: string;
   creator_id: string;
   executor_id: string;
-}
-
-interface UploadProgressEvent {
-  loaded: number;
-  total: number;
-}
-
-interface CustomFileOptions extends FileOptions {
-  onUploadProgress?: (progress: UploadProgressEvent) => void;
+  created_at: string;
 }
 
 export function Messages() {
@@ -53,7 +46,7 @@ export function Messages() {
   const [showSidebar, setShowSidebar] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -78,6 +71,53 @@ export function Messages() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  const setupRealtimeSubscription = () => {
+    if (channelRef.current) {
+      channelRef.current.unsubscribe();
+    }
+
+    const channel = supabase.channel(`messages:${selectedTask}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `task_id=eq.${selectedTask}`,
+        },
+        async (payload) => {
+          // Only fetch and add the message if it wasn't sent by the current user
+          if (payload.new.sender_id !== userProfile?.id) {
+            const { data: newMessage } = await supabase
+              .from('messages')
+              .select(`
+                *,
+                sender:profiles!messages_sender_id_fkey (
+                  username
+                ),
+                attachments (
+                  id,
+                  file_name,
+                  file_type,
+                  file_path,
+                  file_size
+                )
+              `)
+              .eq('id', payload.new.id)
+              .single();
+
+            if (newMessage) {
+              setMessages(current => [...current, newMessage]);
+              scrollToBottom();
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    channelRef.current = channel;
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -109,7 +149,8 @@ export function Messages() {
         .from('tasks')
         .select('*')
         .or(`creator_id.eq.${profile.id},executor_id.eq.${profile.id}`)
-        .eq('status', 'in_progress');
+        .eq('status', 'in_progress')
+        .order('created_at', { ascending: false });
 
       setTasks(tasksData || []);
       
@@ -139,57 +180,10 @@ export function Messages() {
       .order('created_at', { ascending: true });
 
     setMessages(messagesData || []);
+    scrollToBottom();
   };
 
-  const setupRealtimeSubscription = () => {
-    if (channelRef.current) {
-      channelRef.current.unsubscribe();
-    }
-
-    const channel = supabase.channel(`messages:${selectedTask}`);
-    
-    channel
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `task_id=eq.${selectedTask}`,
-        },
-        async (payload) => {
-          if (payload.new.sender_id !== userProfile?.id) {
-            const { data: newMessage } = await supabase
-              .from('messages')
-              .select(`
-                *,
-                sender:profiles!messages_sender_id_fkey (
-                  username
-                ),
-                attachments (
-                  id,
-                  file_name,
-                  file_type,
-                  file_path,
-                  file_size
-                )
-              `)
-              .eq('id', payload.new.id)
-              .single();
-
-            if (newMessage) {
-              setMessages((current) => [...current, newMessage]);
-              scrollToBottom();
-            }
-          }
-        }
-      )
-      .subscribe();
-
-    channelRef.current = channel;
-  };
-
-  const handleDownload = async (attachment: NonNullable<Message['attachments']>[0]) => {
+  const handleDownload = async (attachment: Attachment) => {
     try {
       const { data, error } = await supabase.storage
         .from('attachments')
@@ -226,29 +220,28 @@ export function Messages() {
         const fileExt = selectedFile.name.split('.').pop();
         const fileName = `${Math.random()}.${fileExt}`;
 
-        const options: CustomFileOptions = {
-          onUploadProgress: (progress: UploadProgressEvent) => {
+        const uploadOptions: CustomFileOptions = {
+          onUploadProgress: (progress) => {
             setUploadProgress((progress.loaded / progress.total) * 100);
           },
         };
 
         const { error: uploadError } = await supabase.storage
           .from('attachments')
-          .upload(fileName, selectedFile, options);
+          .upload(fileName, selectedFile, uploadOptions);
 
         if (uploadError) throw uploadError;
         filePath = fileName;
       }
 
-      const messageData = {
-        task_id: selectedTask,
-        sender_id: userProfile.id,
-        content: messageContent.trim() || ' ',
-      };
-
+      // Insert the message
       const { data: newMessage, error: messageError } = await supabase
         .from('messages')
-        .insert(messageData)
+        .insert({
+          task_id: selectedTask,
+          sender_id: userProfile.id,
+          content: messageContent.trim() || ' ',
+        })
         .select(`
           *,
           sender:profiles!messages_sender_id_fkey (
@@ -259,7 +252,8 @@ export function Messages() {
 
       if (messageError) throw messageError;
 
-      if (filePath && newMessage && selectedFile) {
+      // If there's a file, create the attachment
+       if (filePath && newMessage && selectedFile) {
         const { error: attachmentError } = await supabase
           .from('attachments')
           .insert({
@@ -292,10 +286,10 @@ export function Messages() {
           .single();
 
         if (messageWithAttachments) {
-          setMessages((current) => [...current, messageWithAttachments]);
+          setMessages(current => [...current, messageWithAttachments]);
         }
       } else if (newMessage) {
-        setMessages((current) => [...current, { ...newMessage, attachments: [] }]);
+        setMessages(current => [...current, { ...newMessage, attachments: [] }]);
       }
 
       setMessageContent('');
