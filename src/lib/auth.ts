@@ -49,35 +49,43 @@ export function useAuth() {
       setError(null);
       setLoading(true);
 
-      if (!window.Pi) {
-        throw new Error('Pi Network SDK not found');
+      // Check if Pi SDK is available
+      if (typeof window.Pi === 'undefined') {
+        throw new Error('Pi Network SDK not found. Please ensure you are using the Pi Browser.');
       }
 
       // Initialize Pi SDK
-      window.Pi.init({ version: "2.0", sandbox: true });
+      try {
+        window.Pi.init({ version: "2.0", sandbox: true });
+      } catch (initError) {
+        console.error('Pi SDK init error:', initError);
+        throw new Error('Failed to initialize Pi Network SDK');
+      }
 
       // Authenticate with Pi Network
-      const auth = await window.Pi.authenticate(['username', 'payments', 'wallet_address'], () => {});
-      
-      if (!auth?.user) {
+      console.log('Starting Pi authentication...');
+      const auth = await window.Pi.authenticate(
+        ['username', 'payments', 'wallet_address'],
+        () => console.log('Incomplete payment found')
+      ).catch(authError => {
+        console.error('Pi authenticate error:', authError);
         throw new Error('Failed to authenticate with Pi Network');
+      });
+
+      if (!auth?.user) {
+        throw new Error('No user data received from Pi Network');
       }
 
       const { user: piUser } = auth;
-      
+      console.log('Pi auth successful:', piUser);
+
       // Find the wallet credential
       const walletCredential = Array.isArray(piUser.credentials) 
         ? piUser.credentials.find(cred => cred.type === 'wallet_address')
         : null;
       
       const walletAddress = walletCredential?.address;
-
-      console.log('Pi auth response:', {
-        username: piUser.username,
-        uid: piUser.uid,
-        walletAddress,
-        credentials: piUser.credentials
-      });
+      console.log('Wallet credential:', walletCredential);
 
       if (!walletAddress) {
         throw new Error('Wallet address not available. Please ensure you have a Pi wallet.');
@@ -87,13 +95,16 @@ export function useAuth() {
       const email = `${piUser.username}@gigs.user`;
       const password = `GIGS_${piUser.uid}`;
 
-      // Try to sign in
+      // Try to sign in first
+      console.log('Attempting to sign in...');
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (!signInError) {
+        console.log('Sign in successful');
+        
         // Update wallet address if it changed
         const { data: existingProfile } = await supabase
           .from('profiles')
@@ -113,6 +124,7 @@ export function useAuth() {
       }
 
       // If sign in fails, create new account
+      console.log('Sign in failed, creating new account...');
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
@@ -129,6 +141,7 @@ export function useAuth() {
       if (!signUpData.user) throw new Error('Failed to create account');
 
       // Create profile
+      console.log('Creating profile...');
       await supabase.from('profiles').insert({
         pi_user_id: signUpData.user.id,
         username: piUser.username,
