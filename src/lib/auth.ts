@@ -33,9 +33,6 @@ declare global {
   }
 }
 
-// Use a consistent email domain
-const EMAIL_DOMAIN = 'gigs.user';
-
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,11 +82,12 @@ export function useAuth() {
         throw new Error('Failed to get Pi username');
       }
 
-      const userEmail = `${piUser.username}@${EMAIL_DOMAIN}`;
+      // Always use gigs.user domain
+      const userEmail = `${piUser.username}@gigs.user`;
       const userPassword = `PI_${piUser.uid}`;
 
-      // First, try to sign in with new domain
-      console.log('Attempting sign in with new domain...');
+      // Try to sign in
+      console.log('Attempting sign in...');
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email: userEmail,
         password: userPassword,
@@ -113,34 +111,8 @@ export function useAuth() {
         return { error: null };
       }
 
-      // If sign in fails, try with old domain for existing users
-      console.log('Trying old domain...');
-      const oldEmail = `${piUser.username}@pi.user`;
-      const { data: oldSignInData, error: oldSignInError } = await supabase.auth.signInWithPassword({
-        email: oldEmail,
-        password: userPassword,
-      });
-
-      if (!oldSignInError) {
-        console.log('Sign in with old domain successful, updating email...');
-        // Update email to new domain
-        const { error: updateError } = await supabase.auth.updateUser({
-          email: userEmail,
-        });
-
-        if (updateError) {
-          console.error('Failed to update email:', updateError);
-          // Continue with old email if update fails
-          setUser(oldSignInData.user);
-          return { error: null };
-        }
-
-        setUser(oldSignInData.user);
-        return { error: null };
-      }
-
-      console.log('Sign in failed, attempting sign up...');
-      // If both sign in attempts fail, create new account
+      // If sign in fails, create new account
+      console.log('Sign in failed, creating new account...');
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email: userEmail,
         password: userPassword,
