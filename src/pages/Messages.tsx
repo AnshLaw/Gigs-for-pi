@@ -40,7 +40,7 @@ export function Messages() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -56,6 +56,8 @@ export function Messages() {
     if (selectedTask) {
       fetchMessages();
       setupRealtimeSubscription();
+      // Close sidebar on mobile when a task is selected
+      setShowSidebar(false);
     }
 
     return () => {
@@ -68,6 +70,61 @@ export function Messages() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  const setupRealtimeSubscription = () => {
+    if (channelRef.current) {
+      channelRef.current.unsubscribe();
+    }
+
+    const channel = supabase.channel(`messages:${selectedTask}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `task_id=eq.${selectedTask}`,
+        },
+        async (payload) => {
+          // Only fetch and add the message if it's from another user
+          if (payload.new.sender_id !== userProfile?.id) {
+            const { data: newMessage } = await supabase
+              .from('messages')
+              .select(`
+                *,
+                sender:profiles!messages_sender_id_fkey (
+                  username
+                ),
+                attachments (
+                  id,
+                  file_name,
+                  file_type,
+                  file_path,
+                  file_size
+                )
+              `)
+              .eq('id', payload.new.id)
+              .single();
+
+            if (newMessage) {
+              setMessages(current => [...current, newMessage]);
+              scrollToBottom();
+            }
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Subscribed to messages channel:', selectedTask);
+        }
+      });
+
+    channelRef.current = channel;
+  };
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   const fetchUserProfile = async () => {
     if (!user) return;
@@ -125,58 +182,6 @@ export function Messages() {
       .order('created_at', { ascending: true });
 
     setMessages(messagesData || []);
-  };
-
-  const setupRealtimeSubscription = () => {
-    if (channelRef.current) {
-      channelRef.current.unsubscribe();
-    }
-
-    const channel = supabase.channel(`messages:${selectedTask}`);
-    
-    channel
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `task_id=eq.${selectedTask}`,
-        },
-        async (payload) => {
-          if (payload.new.sender_id !== userProfile?.id) {
-            const { data: newMessage } = await supabase
-              .from('messages')
-              .select(`
-                *,
-                sender:profiles!messages_sender_id_fkey (
-                  username
-                ),
-                attachments (
-                  id,
-                  file_name,
-                  file_type,
-                  file_path,
-                  file_size
-                )
-              `)
-              .eq('id', payload.new.id)
-              .single();
-
-            if (newMessage) {
-              setMessages((current) => [...current, newMessage]);
-              scrollToBottom();
-            }
-          }
-        }
-      )
-      .subscribe();
-
-    channelRef.current = channel;
-  };
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -259,10 +264,10 @@ export function Messages() {
           .single();
 
         if (messageWithAttachments) {
-          setMessages((current) => [...current, messageWithAttachments]);
+          setMessages(current => [...current, messageWithAttachments]);
         }
       } else if (newMessage) {
-        setMessages((current) => [...current, { ...newMessage, attachments: [] }]);
+        setMessages(current => [...current, { ...newMessage, attachments: [] }]);
       }
 
       setMessageContent('');
@@ -318,17 +323,22 @@ export function Messages() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <div className="flex flex-col md:flex-row gap-4 h-[calc(100vh-12rem)]">
-        {/* Mobile Toggle Button */}
+      <div className="flex gap-4 h-[calc(100vh-12rem)]">
+        {/* Mobile menu button */}
         <button
           onClick={() => setShowSidebar(!showSidebar)}
-          className="md:hidden p-2 bg-white rounded-lg shadow-md mb-2"
+          className="md:hidden fixed top-20 left-4 z-50 p-2 bg-white rounded-md shadow-md"
         >
-          <Menu className="h-6 w-6" />
+          <Menu className="h-6 w-6 text-gray-600" />
         </button>
 
         {/* Tasks Sidebar */}
-        <div className={`${showSidebar ? 'block' : 'hidden'} md:block w-full md:w-64 bg-white shadow-md rounded-lg overflow-hidden flex-shrink-0 ${showSidebar ? 'h-64 md:h-full' : ''}`}>
+        <div className={`
+          w-64 bg-white shadow-md rounded-lg overflow-hidden flex-shrink-0
+          fixed md:relative inset-y-0 left-0 z-40 transform
+          ${showSidebar ? 'translate-x-0' : '-translate-x-full'}
+          md:translate-x-0 transition-transform duration-200 ease-in-out
+        `}>
           <div className="p-4 border-b">
             <h2 className="font-semibold text-gray-900">Active Tasks</h2>
           </div>
@@ -336,10 +346,7 @@ export function Messages() {
             {tasks.map((task) => (
               <button
                 key={task.id}
-                onClick={() => {
-                  setSelectedTask(task.id);
-                  setShowSidebar(false);
-                }}
+                onClick={() => setSelectedTask(task.id)}
                 className={`w-full text-left p-4 hover:bg-gray-50 transition-colors ${
                   selectedTask === task.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''
                 }`}
