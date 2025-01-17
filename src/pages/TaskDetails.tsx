@@ -89,22 +89,21 @@ export function TaskDetails() {
       setDownloadingFile(attachment.id);
       setError(null);
 
-      const { data, error } = await supabase.storage
+      // Get the signed URL for the file
+      const { data: signedUrlData, error: signedUrlError } = await supabase.storage
         .from('attachments')
-        .download(attachment.file_path);
+        .createSignedUrl(attachment.file_path, 60); // URL valid for 60 seconds
 
-      if (error) throw error;
+      if (signedUrlError) throw signedUrlError;
+      if (!signedUrlData?.signedUrl) throw new Error('Failed to generate download URL');
 
-      // Create a blob URL and trigger download
-      const blob = new Blob([data], { type: attachment.file_type });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = attachment.file_name;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      // Create a temporary link and trigger download
+      const link = document.createElement('a');
+      link.href = signedUrlData.signedUrl;
+      link.download = attachment.file_name; // Set the download filename
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     } catch (err) {
       console.error('Error downloading file:', err);
       setError('Failed to download file. Please try again.');
