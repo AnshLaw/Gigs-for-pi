@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { initiatePayment } from '../lib/payments';
 import { Button } from './ui/Button';
+import { AlertCircle } from 'lucide-react';
 
 interface PaymentButtonProps {
   amount?: number;
   onSuccess?: (result: any) => void;
+  className?: string;
 }
 
-export function PaymentButton({ amount = 1, onSuccess }: PaymentButtonProps) {
+export function PaymentButton({ amount = 1, onSuccess, className }: PaymentButtonProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,7 +19,7 @@ export function PaymentButton({ amount = 1, onSuccess }: PaymentButtonProps) {
 
     try {
       const result = await initiatePayment(amount);
-      console.log('Payment result:', result);
+      console.log('Payment completed:', result);
       if (onSuccess) {
         onSuccess(result);
       }
@@ -30,7 +32,7 @@ export function PaymentButton({ amount = 1, onSuccess }: PaymentButtonProps) {
   };
 
   return (
-    <div className="space-y-2">
+    <div className={`space-y-2 ${className}`}>
       <Button
         onClick={handlePayment}
         disabled={loading}
@@ -41,9 +43,10 @@ export function PaymentButton({ amount = 1, onSuccess }: PaymentButtonProps) {
       </Button>
       
       {error && (
-        <p className="text-sm text-red-600">
-          {error}
-        </p>
+        <div className="flex items-center gap-2 text-sm text-red-600">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+          <p>{error}</p>
+        </div>
       )}
     </div>
   );
