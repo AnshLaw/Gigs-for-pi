@@ -13,17 +13,28 @@ declare global {
           username: string;
         };
       }>;
-      createPayment: (payment: {
-        amount: number;
-        memo: string;
-        metadata: Record<string, any>;
-      }, callbacks: {
-        onReadyForServerApproval: (paymentId: string) => void;
-        onReadyForServerCompletion: (paymentId: string, txid: string) => void;
-        onCancel: (paymentId: string) => void;
-        onError: (error: Error, payment?: any) => void;
-      }) => Promise<void>;
-      openPaymentDialog: (paymentId: string) => Promise<void>;
+      createPayment: (
+        payment: {
+          amount: number;
+          memo: string;
+          metadata: Record<string, any>;
+        },
+        callbacks: {
+          onReadyForServerApproval: (paymentId: string) => void;
+          onReadyForServerCompletion: (paymentId: string, txid: string) => void;
+          onCancel: (paymentId: string) => void;
+          onError: (error: Error, payment?: any) => void;
+        }
+      ) => Promise<{
+        identifier: string;
+        status: {
+          developer_approved: boolean;
+          transaction_verified: boolean;
+          developer_completed: boolean;
+          cancelled: boolean;
+          user_cancelled: boolean;
+        };
+      }>;
     };
   }
 }
