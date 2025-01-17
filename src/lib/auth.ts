@@ -1,43 +1,14 @@
 import { useEffect, useState } from 'react';
 import { supabase } from './supabase';
 import type { User } from '@supabase/supabase-js';
+import axios from 'axios';
+import './types/pi'; // Import Pi types
 
-declare global {
-  interface Window {
-    Pi: {
-      init: (config: { version: string, sandbox?: boolean }) => void;
-      authenticate: (scopes: string[], onIncompletePaymentFound: (payment: any) => void) => Promise<{
-        accessToken: string;
-        user: {
-          uid: string;
-          username: string;
-        };
-      }>;
-      createPayment: (
-        payment: {
-          amount: number;
-          memo: string;
-          metadata: Record<string, any>;
-        },
-        callbacks: {
-          onReadyForServerApproval: (paymentId: string) => void;
-          onReadyForServerCompletion: (paymentId: string, txid: string) => void;
-          onCancel: (paymentId: string) => void;
-          onError: (error: Error, payment?: any) => void;
-        }
-      ) => Promise<{
-        identifier: string;
-        status: {
-          developer_approved: boolean;
-          transaction_verified: boolean;
-          developer_completed: boolean;
-          cancelled: boolean;
-          user_cancelled: boolean;
-        };
-      }>;
-    };
-  }
-}
+// Pi Network API client
+const piApi = axios.create({
+  baseURL: 'https://api.minepi.com/v2',
+  timeout: 20000,
+});
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -63,29 +34,31 @@ export function useAuth() {
       setLoading(true);
       setError(null);
 
-      // Check if Pi SDK is available
       if (!window.Pi) {
         throw new Error('Please use Pi Browser');
       }
 
-      // Authenticate with Pi Network
-      const auth = await window.Pi.authenticate(
-        ['username', 'payments'], 
-        (payment) => {
-          // Handle incomplete payments if needed
-          console.log('Incomplete payment found:', payment);
-        }
+      const authResult = await window.Pi.authenticate(
+        ['username', 'payments'],
+        () => {} // Empty callback since we don't handle incomplete payments
       );
 
-      console.log('Pi auth response:', auth);
-
-      if (!auth?.user?.username) {
-        throw new Error('Failed to get username from Pi Network');
+      if (!authResult?.accessToken || !authResult?.user?.username) {
+        throw new Error('Failed to authenticate with Pi Network');
       }
 
-      // Create email from username
-      const email = `${auth.user.username}@gigs.user`;
-      const password = `GIGS_${auth.user.uid}`;
+      // Verify user with Pi Platform API
+      const { data: userData } = await piApi.get('/me', {
+        headers: { 'Authorization': `Bearer ${authResult.accessToken}` }
+      });
+
+      if (!userData?.uid || userData.uid !== authResult.user.uid) {
+        throw new Error('User verification failed');
+      }
+
+      // Create email from username (for Supabase auth)
+      const email = `${authResult.user.username}@gigs.user`;
+      const password = `GIGS_${authResult.user.uid}`;
 
       // Try to sign in first
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
@@ -104,8 +77,8 @@ export function useAuth() {
         password,
         options: {
           data: {
-            username: auth.user.username,
-            pi_uid: auth.user.uid,
+            username: authResult.user.username,
+            pi_uid: authResult.user.uid,
           },
         },
       });
@@ -118,9 +91,9 @@ export function useAuth() {
         .from('profiles')
         .insert({
           pi_user_id: signUpData.user.id,
-          username: auth.user.username,
+          username: authResult.user.username,
           rating: 0,
-          completed_tasks: 0,
+          completed_tasks: 0
         });
 
       if (profileError) {
