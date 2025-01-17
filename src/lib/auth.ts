@@ -65,7 +65,7 @@ export function useAuth() {
         throw new Error('Pi Network SDK not found');
       }
 
-      // Authenticate with Pi Network - now including wallet scope
+      // Authenticate with Pi Network
       console.log('Starting Pi authentication...');
       const auth = await window.Pi.authenticate(
         ['username', 'payments', 'wallet_address'],
@@ -82,21 +82,23 @@ export function useAuth() {
         throw new Error('Failed to get Pi username');
       }
 
-      // Always use gigs.user domain
-      const userEmail = `${piUser.username}@gigs.user`;
-      const userPassword = `PI_${piUser.uid}`;
+      // Generate consistent credentials
+      const email = `${piUser.username}@gigs.user`;
+      const password = `GIGS_${piUser.uid}_${auth.accessToken.slice(-8)}`;
 
-      // Try to sign in
+      // Try to sign in first
       console.log('Attempting sign in...');
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email: userEmail,
-        password: userPassword,
+        email,
+        password,
       });
 
       if (!signInError) {
         console.log('Sign in successful');
-        // Update wallet address if it has changed
-        if (piUser.walletAddress) {
+        setUser(signInData.user);
+
+        // Update wallet address if available
+        if (piUser.walletAddress && signInData.user) {
           const { error: updateError } = await supabase
             .from('profiles')
             .update({ wallet_address: piUser.walletAddress })
@@ -107,15 +109,14 @@ export function useAuth() {
           }
         }
 
-        setUser(signInData.user);
         return { error: null };
       }
 
       // If sign in fails, create new account
       console.log('Sign in failed, creating new account...');
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: userEmail,
-        password: userPassword,
+        email,
+        password,
         options: {
           data: {
             username: piUser.username,
@@ -134,7 +135,7 @@ export function useAuth() {
       }
 
       console.log('Creating profile...');
-      // Create profile for new user
+      // Create profile
       const { error: profileError } = await supabase
         .from('profiles')
         .insert({
@@ -147,7 +148,6 @@ export function useAuth() {
 
       if (profileError) {
         console.error('Profile creation error:', profileError);
-        // If profile creation fails, clean up by deleting the user
         await supabase.auth.signOut();
         throw new Error('Failed to create profile');
       }
