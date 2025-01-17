@@ -64,70 +64,54 @@ export function useAuth() {
         throw new Error('Pi Network SDK not found');
       }
 
-      // Initialize Pi SDK
-      window.Pi.init({ version: "2.0", sandbox: true });
-
       // Authenticate with Pi Network
-      console.log('Starting Pi authentication...');
       const auth = await window.Pi.authenticate(
-        ['username', 'payments', 'wallet_address'],
-        () => console.log('Incomplete payment found!')
-      ).catch(err => {
-        console.error('Pi authenticate error:', err);
-        throw new Error('Failed to authenticate with Pi Network');
-      });
-      
-      console.log('Pi auth response:', auth);
-      const { accessToken, user: piUser } = auth;
+        ['username', 'payments'], // Only request necessary scopes
+        () => {} // Empty callback for incomplete payments
+      );
 
-      if (!piUser || !piUser.username) {
-        throw new Error('Failed to authenticate with Pi Network');
+      const { user: piUser } = auth;
+
+      if (!piUser?.username) {
+        throw new Error('Failed to get Pi username');
       }
 
-      // Format username as a valid email
-      const formattedEmail = `${piUser.username}@gigs.user`;
+      // Simple email format for auth
+      const email = `${piUser.username}@gigs.user`;
+      const password = `PI_${piUser.uid}`;
 
-      // Generate a deterministic password based on Pi user data
-      const password = `PI_${piUser.uid}_${accessToken.slice(-8)}`;
-
-      // Try to sign in first
+      // Try to sign in
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email: formattedEmail,
+        email,
         password,
       });
 
       if (!signInError) {
-        console.log('Signed in successfully');
         setUser(signInData.user);
         return { error: null };
       }
 
-      // If sign in fails, try to sign up
-      console.log('Sign in failed, attempting sign up...');
+      // If sign in fails, create a new account
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: formattedEmail,
+        email,
         password,
         options: {
           data: {
-            pi_uid: piUser.uid,
             username: piUser.username,
+            pi_uid: piUser.uid,
           },
         },
       });
 
       if (signUpError) {
-        // If user already exists but sign in failed, something is wrong
-        if (signUpError.message?.includes('User already registered')) {
-          throw new Error('Authentication failed. Please try again.');
-        }
         throw signUpError;
       }
 
       if (!signUpData.user) {
-        throw new Error('Failed to create user account');
+        throw new Error('Failed to create account');
       }
 
-      // Create profile for new user
+      // Create user profile
       const { error: profileError } = await supabase
         .from('profiles')
         .insert({
@@ -143,12 +127,11 @@ export function useAuth() {
         throw new Error('Failed to create profile');
       }
 
-      console.log('Account created successfully');
       setUser(signUpData.user);
       return { error: null };
     } catch (err) {
       console.error('Auth error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to authenticate with Pi Network');
+      setError(err instanceof Error ? err.message : 'Authentication failed');
       return { error: err instanceof Error ? err : new Error('Authentication failed') };
     } finally {
       setLoading(false);
@@ -157,8 +140,7 @@ export function useAuth() {
 
   const signOut = async () => {
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+      await supabase.auth.signOut();
       setUser(null);
       return { error: null };
     } catch (err) {
