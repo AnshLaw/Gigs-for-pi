@@ -27,10 +27,12 @@ export function useAuth() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
     });
 
+    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
     });
@@ -48,30 +50,46 @@ export function useAuth() {
         throw new Error('Please use Pi Browser');
       }
 
-      // Initialize Pi SDK
-      window.Pi.init({ version: "2.0", sandbox: true });
-
       // Authenticate with Pi Network
-      const auth = await window.Pi.authenticate(['username', 'wallet_address'], () => {});
-      
-      if (!auth?.user) {
-        throw new Error('Authentication failed');
+      const auth = await window.Pi.authenticate(['username', 'wallet_address'], () => {
+        // Handle incomplete payments if needed
+        console.log('Checking for incomplete payments...');
+      });
+
+      if (!auth?.user?.username) {
+        throw new Error('Failed to get username from Pi Network');
       }
 
-      const { user: piUser } = auth;
-      const walletAddress = piUser.credentials?.find(cred => cred.type === 'wallet_address')?.address;
+      // Get wallet address from credentials
+      const walletAddress = auth.user.credentials?.find(
+        cred => cred.type === 'wallet_address'
+      )?.address;
 
-      // Create credentials
-      const email = `${piUser.username}@gigs.user`;
-      const password = `GIGS_${piUser.uid}`;
+      if (!walletAddress) {
+        throw new Error('Failed to get wallet address from Pi Network');
+      }
 
-      // Try to sign in
+      // Create email from username
+      const email = `${auth.user.username}@gigs.user`;
+      const password = `GIGS_${auth.user.uid}`;
+
+      // Try to sign in first
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (!signInError) {
+        // Update wallet address if it changed
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update({ wallet_address: walletAddress })
+          .eq('pi_user_id', signInData.user.id);
+
+        if (updateError) {
+          console.error('Failed to update wallet address:', updateError);
+        }
+
         setUser(signInData.user);
         return;
       }
@@ -82,8 +100,8 @@ export function useAuth() {
         password,
         options: {
           data: {
-            username: piUser.username,
-            pi_uid: piUser.uid,
+            username: auth.user.username,
+            pi_uid: auth.user.uid,
           },
         },
       });
@@ -91,12 +109,12 @@ export function useAuth() {
       if (signUpError) throw signUpError;
       if (!signUpData.user) throw new Error('Failed to create account');
 
-      // Create profile
+      // Create profile with wallet address
       const { error: profileError } = await supabase
         .from('profiles')
         .insert({
           pi_user_id: signUpData.user.id,
-          username: piUser.username,
+          username: auth.user.username,
           wallet_address: walletAddress,
           rating: 0,
           completed_tasks: 0,
