@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
-import { Send, Paperclip, X, Download } from 'lucide-react';
+import { Send, Paperclip, X, Download, Menu } from 'lucide-react';
+import type { CustomFileOptions, UploadProgressEvent } from '../lib/types/supabase';
 
 interface Message {
   id: string;
@@ -39,6 +40,7 @@ export function Messages() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [showSidebar, setShowSidebar] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -66,58 +68,6 @@ export function Messages() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
-
-  const setupRealtimeSubscription = () => {
-    if (channelRef.current) {
-      channelRef.current.unsubscribe();
-    }
-
-    const channel = supabase.channel(`messages:${selectedTask}`);
-    
-    channel
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `task_id=eq.${selectedTask}`,
-        },
-        async (payload) => {
-          if (payload.new.sender_id !== userProfile?.id) {
-            const { data: newMessage } = await supabase
-              .from('messages')
-              .select(`
-                *,
-                sender:profiles!messages_sender_id_fkey (
-                  username
-                ),
-                attachments (
-                  id,
-                  file_name,
-                  file_type,
-                  file_path,
-                  file_size
-                )
-              `)
-              .eq('id', payload.new.id)
-              .single();
-
-            if (newMessage) {
-              setMessages((current) => [...current, newMessage]);
-              scrollToBottom();
-            }
-          }
-        }
-      )
-      .subscribe();
-
-    channelRef.current = channel;
-  };
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
 
   const fetchUserProfile = async () => {
     if (!user) return;
@@ -177,54 +127,56 @@ export function Messages() {
     setMessages(messagesData || []);
   };
 
-  const downloadFile = async (filePath: string, fileName: string) => {
-    try {
-      const { data, error } = await supabase.storage
-        .from('attachments')
-        .download(filePath);
-
-      if (error) throw error;
-
-      const url = URL.createObjectURL(data);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error('Error downloading file:', err);
-      setError('Failed to download file');
+  const setupRealtimeSubscription = () => {
+    if (channelRef.current) {
+      channelRef.current.unsubscribe();
     }
-  };
 
-  const uploadFile = async (file: File): Promise<string> => {
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${Math.random()}.${fileExt}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from('attachments')
-      .upload(fileName, file, {
-        onUploadProgress: (progress) => {
-          setUploadProgress((progress.loaded / progress.total) * 100);
+    const channel = supabase.channel(`messages:${selectedTask}`);
+    
+    channel
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `task_id=eq.${selectedTask}`,
         },
-      });
+        async (payload) => {
+          if (payload.new.sender_id !== userProfile?.id) {
+            const { data: newMessage } = await supabase
+              .from('messages')
+              .select(`
+                *,
+                sender:profiles!messages_sender_id_fkey (
+                  username
+                ),
+                attachments (
+                  id,
+                  file_name,
+                  file_type,
+                  file_path,
+                  file_size
+                )
+              `)
+              .eq('id', payload.new.id)
+              .single();
 
-    if (uploadError) throw uploadError;
+            if (newMessage) {
+              setMessages((current) => [...current, newMessage]);
+              scrollToBottom();
+            }
+          }
+        }
+      )
+      .subscribe();
 
-    return fileName;
+    channelRef.current = channel;
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 10 * 1024 * 1024) {
-        setError('File size must be less than 10MB');
-        return;
-      }
-      setSelectedFile(file);
-    }
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -239,7 +191,21 @@ export function Messages() {
       let filePath: string | undefined;
       
       if (selectedFile) {
-        filePath = await uploadFile(selectedFile);
+        const fileExt = selectedFile.name.split('.').pop() || '';
+        const fileName = `${Math.random()}.${fileExt}`;
+
+        const options: CustomFileOptions = {
+          onUploadProgress: (progress: UploadProgressEvent) => {
+            setUploadProgress((progress.loaded / progress.total) * 100);
+          }
+        };
+
+        const { error: uploadError } = await supabase.storage
+          .from('attachments')
+          .upload(fileName, selectedFile, options);
+
+        if (uploadError) throw uploadError;
+        filePath = fileName;
       }
 
       const messageData = {
@@ -261,7 +227,7 @@ export function Messages() {
 
       if (messageError) throw messageError;
 
-      if (filePath && newMessage) {
+      if (filePath && newMessage && selectedFile) {
         const { error: attachmentError } = await supabase
           .from('attachments')
           .insert({
@@ -274,7 +240,6 @@ export function Messages() {
 
         if (attachmentError) throw attachmentError;
 
-        // Fetch the complete message with attachments
         const { data: messageWithAttachments } = await supabase
           .from('messages')
           .select(`
@@ -315,6 +280,28 @@ export function Messages() {
     }
   };
 
+  const downloadFile = async (filePath: string, fileName: string) => {
+    try {
+      const { data, error } = await supabase.storage
+        .from('attachments')
+        .download(filePath);
+
+      if (error) throw error;
+
+      const url = URL.createObjectURL(data);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error downloading file:', err);
+      setError('Failed to download file');
+    }
+  };
+
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -331,9 +318,17 @@ export function Messages() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <div className="flex gap-4 h-[calc(100vh-12rem)]">
+      <div className="flex flex-col md:flex-row gap-4 h-[calc(100vh-12rem)]">
+        {/* Mobile Toggle Button */}
+        <button
+          onClick={() => setShowSidebar(!showSidebar)}
+          className="md:hidden p-2 bg-white rounded-lg shadow-md mb-2"
+        >
+          <Menu className="h-6 w-6" />
+        </button>
+
         {/* Tasks Sidebar */}
-        <div className="w-64 bg-white shadow-md rounded-lg overflow-hidden flex-shrink-0">
+        <div className={`${showSidebar ? 'block' : 'hidden'} md:block w-full md:w-64 bg-white shadow-md rounded-lg overflow-hidden flex-shrink-0 ${showSidebar ? 'h-64 md:h-full' : ''}`}>
           <div className="p-4 border-b">
             <h2 className="font-semibold text-gray-900">Active Tasks</h2>
           </div>
@@ -341,7 +336,10 @@ export function Messages() {
             {tasks.map((task) => (
               <button
                 key={task.id}
-                onClick={() => setSelectedTask(task.id)}
+                onClick={() => {
+                  setSelectedTask(task.id);
+                  setShowSidebar(false);
+                }}
                 className={`w-full text-left p-4 hover:bg-gray-50 transition-colors ${
                   selectedTask === task.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''
                 }`}
@@ -358,134 +356,141 @@ export function Messages() {
         </div>
 
         {/* Messages Area */}
-        <div className="flex-1 bg-white shadow-md rounded-lg overflow-hidden">
+        <div className={`flex-1 bg-white shadow-md rounded-lg overflow-hidden ${!showSidebar ? 'block' : 'hidden md:block'}`}>
           {selectedTask ? (
-            <>
-              <div className="h-full flex flex-col">
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {messages.map((message) => (
+            <div className="h-full flex flex-col">
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${
+                      message.sender_id === userProfile?.id ? 'justify-end' : 'justify-start'
+                    }`}
+                  >
                     <div
-                      key={message.id}
-                      className={`flex ${
-                        message.sender_id === userProfile?.id ? 'justify-end' : 'justify-start'
+                      className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                        message.sender_id === userProfile?.id
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-gray-100 text-gray-900'
                       }`}
                     >
-                      <div
-                        className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                          message.sender_id === userProfile?.id
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-gray-100 text-gray-900'
-                        }`}
-                      >
-                        <div className="text-sm font-medium mb-1">
-                          {message.sender.username}
-                        </div>
-                        {message.content.trim() && <div>{message.content}</div>}
-                        {message.attachments?.map((attachment) => (
-                          <div
-                            key={attachment.id}
-                            className="mt-2 p-2 rounded bg-white/10 text-sm"
-                          >
-                            <div className="flex items-center gap-2">
-                              <Paperclip className="h-4 w-4" />
-                              <span className="flex-1 truncate">{attachment.file_name}</span>
-                              <span className="text-xs opacity-75">
-                                {formatFileSize(attachment.file_size)}
-                              </span>
-                              <button
-                                onClick={() => downloadFile(attachment.file_path, attachment.file_name)}
-                                className="p-1 hover:bg-white/20 rounded"
-                                title="Download file"
-                              >
-                                <Download className="h-4 w-4" />
-                              </button>
-                            </div>
+                      <div className="text-sm font-medium mb-1">
+                        {message.sender.username}
+                      </div>
+                      {message.content.trim() && <div>{message.content}</div>}
+                      {message.attachments?.map((attachment) => (
+                        <div
+                          key={attachment.id}
+                          className="mt-2 p-2 rounded bg-white/10 text-sm"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Paperclip className="h-4 w-4" />
+                            <span className="flex-1 truncate">{attachment.file_name}</span>
+                            <span className="text-xs opacity-75">
+                              {formatFileSize(attachment.file_size)}
+                            </span>
+                            <button
+                              onClick={() => downloadFile(attachment.file_path, attachment.file_name)}
+                              className="p-1 hover:bg-white/20 rounded"
+                              title="Download file"
+                            >
+                              <Download className="h-4 w-4" />
+                            </button>
                           </div>
-                        ))}
-                        <div className="text-xs opacity-75 mt-1">
-                          {new Date(message.created_at).toLocaleTimeString()}
                         </div>
+                      ))}
+                      <div className="text-xs opacity-75 mt-1">
+                        {new Date(message.created_at).toLocaleTimeString()}
                       </div>
                     </div>
-                  ))}
-                  <div ref={messagesEndRef} />
-                </div>
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
 
-                <div className="p-4 border-t">
-                  {error && (
-                    <div className="mb-4 text-sm text-red-600 bg-red-50 rounded p-2">
-                      {error}
-                    </div>
-                  )}
+              <div className="p-4 border-t">
+                {error && (
+                  <div className="mb-4 text-sm text-red-600 bg-red-50 rounded p-2">
+                    {error}
+                  </div>
+                )}
+                
+                <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={messageContent}
+                    onChange={(e) => setMessageContent(e.target.value)}
+                    placeholder="Type your message..."
+                    className="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  />
                   
-                  <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+                  <div className="relative">
                     <input
-                      type="text"
-                      value={messageContent}
-                      onChange={(e) => setMessageContent(e.target.value)}
-                      placeholder="Type your message..."
-                      className="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (file.size > 10 * 1024 * 1024) {
+                            setError('File size must be less than 10MB');
+                            return;
+                          }
+                          setSelectedFile(file);
+                        }
+                      }}
+                      className="hidden"
+                      accept="image/*,.pdf,.doc,.docx,.txt"
                     />
-                    
-                    <div className="relative">
-                      <input
-                        type="file"
-                        ref={fileInputRef}
-                        onChange={handleFileSelect}
-                        className="hidden"
-                        accept="image/*,.pdf,.doc,.docx,.txt"
-                      />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-2 text-gray-500 hover:text-gray-700"
+                    >
+                      <Paperclip className="h-5 w-5" />
+                    </button>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={sendingMessage || (!messageContent.trim() && !selectedFile)}
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                  >
+                    <Send className="h-4 w-4" />
+                  </button>
+                </form>
+
+                {selectedFile && (
+                  <div className="mt-2 p-2 bg-gray-50 rounded-md">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-sm text-gray-600">
+                        <Paperclip className="h-4 w-4" />
+                        <span className="truncate">{selectedFile.name}</span>
+                        <span>({formatFileSize(selectedFile.size)})</span>
+                      </div>
                       <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="p-2 text-gray-500 hover:text-gray-700"
+                        onClick={() => {
+                          setSelectedFile(null);
+                          if (fileInputRef.current) {
+                            fileInputRef.current.value = '';
+                          }
+                        }}
+                        className="text-gray-500 hover:text-gray-700"
                       >
-                        <Paperclip className="h-5 w-5" />
+                        <X className="h-4 w-4" />
                       </button>
                     </div>
-
-                    <button
-                      type="submit"
-                      disabled={sendingMessage || (!messageContent.trim() && !selectedFile)}
-                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                    >
-                      <Send className="h-4 w-4" />
-                    </button>
-                  </form>
-
-                  {selectedFile && (
-                    <div className="mt-2 p-2 bg-gray-50 rounded-md">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <Paperclip className="h-4 w-4" />
-                          <span className="truncate">{selectedFile.name}</span>
-                          <span>({formatFileSize(selectedFile.size)})</span>
-                        </div>
-                        <button
-                          onClick={() => {
-                            setSelectedFile(null);
-                            if (fileInputRef.current) {
-                              fileInputRef.current.value = '';
-                            }
-                          }}
-                          className="text-gray-500 hover:text-gray-700"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
+                    {uploadProgress > 0 && uploadProgress < 100 && (
+                      <div className="mt-1 h-1 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-indigo-600 transition-all duration-300"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
                       </div>
-                      {uploadProgress > 0 && uploadProgress < 100 && (
-                        <div className="mt-1 h-1 bg-gray-200 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-indigo-600 transition-all duration-300"
-                            style={{ width: `${uploadProgress}%` }}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                )}
               </div>
-            </>
+            </div>
           ) : (
             <div className="h-full flex items-center justify-center">
               <div className="text-center text-gray-500">
