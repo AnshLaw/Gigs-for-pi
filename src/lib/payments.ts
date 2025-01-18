@@ -1,7 +1,13 @@
 import platformAPIClient from './platformAPIClient';
 import type { PaymentData } from '../types/pi';
 
-export async function initiatePayment(amount: number = 1) {
+interface PaymentResult {
+  status: string;
+  paymentId: string;
+  txid: string;
+}
+
+export async function initiatePayment(amount: number): Promise<PaymentResult> {
   if (!window.Pi) {
     throw new Error('Please use Pi Browser');
   }
@@ -9,21 +15,15 @@ export async function initiatePayment(amount: number = 1) {
   return new Promise((resolve, reject) => {
     const paymentData: PaymentData = {
       amount,
-      memo: "Test payment to app",
-      metadata: { type: "test_payment", timestamp: Date.now() }
+      memo: "Task payment escrow",
+      metadata: { type: "task_payment", timestamp: Date.now() }
     };
 
     const callbacks = {
       onReadyForServerApproval: async function(paymentId: string) {
-        console.log("Payment ready for approval", paymentId);
         try {
-          // Get payment details from Pi Platform API
-          const { data: payment } = await platformAPIClient.get(`/payments/${paymentId}`);
-          console.log("Payment details:", payment);
-
-          // Approve the payment using Pi Platform API
+          await platformAPIClient.get(`/payments/${paymentId}`);
           await platformAPIClient.post(`/payments/${paymentId}/approve`);
-          console.log("Payment approved");
         } catch (err) {
           console.error("Server approval failed:", err);
           reject(err);
@@ -31,9 +31,7 @@ export async function initiatePayment(amount: number = 1) {
       },
 
       onReadyForServerCompletion: async function(paymentId: string, txid: string) {
-        console.log("Payment ready for completion", paymentId, txid);
         try {
-          // Complete the payment using Pi Platform API
           await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
           resolve({ status: "completed", paymentId, txid });
         } catch (err) {
@@ -42,39 +40,26 @@ export async function initiatePayment(amount: number = 1) {
         }
       },
 
-      onCancel: async function(paymentId: string) {
-        console.log("Payment cancelled", paymentId);
-        try {
-          // Handle cancelled payment
-          const { data: payment } = await platformAPIClient.get(`/payments/${paymentId}`);
-          console.log("Cancelled payment details:", payment);
-          reject(new Error('Payment cancelled by user'));
-        } catch (err) {
-          console.error("Failed to handle cancelled payment:", err);
-          reject(err);
-        }
+      onCancel: function() {
+        reject(new Error('Payment cancelled by user'));
       },
 
-      onError: async function(error: Error, payment: any) {
-        console.error("Payment error", error, payment);
-        if (error.message === "User cancelled consent") {
-          // Handle user consent cancellation
-          reject(new Error('Please approve the payment to continue'));
-        } else {
-          // Handle other errors
-          try {
-            if (payment?.identifier) {
-              const { data: paymentDetails } = await platformAPIClient.get(`/payments/${payment.identifier}`);
-              console.error("Error payment details:", paymentDetails);
-            }
-          } catch (err) {
-            console.error("Failed to fetch error payment details:", err);
-          }
-          reject(error);
-        }
+      onError: function(error: Error) {
+        console.error("Payment error:", error);
+        reject(error);
       }
     };
 
     window.Pi.createPayment(paymentData, callbacks);
   });
+}
+
+export async function completePayment(paymentId: string, txid: string): Promise<PaymentResult> {
+  try {
+    await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
+    return { status: "completed", paymentId, txid };
+  } catch (err) {
+    console.error("Payment completion failed:", err);
+    throw err;
+  }
 }

@@ -4,7 +4,9 @@ import { useAuth } from '../lib/auth';
 import { useProfile } from '../lib/hooks';
 import { supabase } from '../lib/supabase';
 import { Clock, DollarSign, Users, AlertCircle, Check, X, Download, Paperclip } from 'lucide-react';
+import { TaskActions } from '../components/TaskActions';
 import type { Task, Bid, TaskAttachment } from '../lib/types';
+
 
 export function TaskDetails() {
   const { id } = useParams();
@@ -206,6 +208,11 @@ export function TaskDetails() {
   const isCreator = profile && task.creator_id === profile.id;
   const canBid = user && !isCreator && task.status === 'open' && !userBid;
 
+  const handleStatusChange = () => {
+    fetchTaskAndBids();
+  };
+
+
   return (
     <div className="max-w-4xl mx-auto">
       <div className="mb-6">
@@ -310,6 +317,20 @@ export function TaskDetails() {
             </div>
           </div>
         </div>
+
+        {task && profile && (
+          <div className="p-6 border-t">
+            <TaskActions
+              taskId={task.id}
+              status={task.status}
+              isCreator={task.creator_id === profile.id}
+              isExecutor={task.executor_id === profile.id}
+              bidAmount={task.payment_amount}
+              onStatusChange={handleStatusChange}
+            />
+          </div>
+        )}
+
       </div>
 
       {canBid && (
