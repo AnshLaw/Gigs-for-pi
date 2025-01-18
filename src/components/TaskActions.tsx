@@ -29,25 +29,30 @@ export function TaskActions({
     setError(null);
 
     try {
-      // Create escrow payment record first
+      // First initiate and complete the Pi payment
+      console.log('Initiating payment for amount:', bidAmount);
+      const result = await initiatePayment(bidAmount);
+      
+      if (!result?.paymentId || !result?.txid) {
+        throw new Error('Payment failed - missing payment details');
+      }
+
+      console.log('Payment successful:', result);
+
+      // Then create and fund the escrow payment record
       const { data: escrow, error: escrowError } = await supabase.rpc('create_escrow_payment', {
         p_task_id: taskId,
-        p_bid_id: null, // This will be updated after payment
+        p_bid_id: null,
         p_amount: bidAmount,
-        p_payment_id: 'pending' // Temporary value
+        p_payment_id: result.paymentId
       });
 
       if (escrowError) throw escrowError;
       if (!escrow) throw new Error('Failed to create escrow record');
 
-      // Initiate Pi payment
-      const result = await initiatePayment(bidAmount);
-      
-      if (!result?.paymentId || !result?.txid) {
-        throw new Error('Payment failed');
-      }
+      console.log('Escrow created:', escrow);
 
-      // Update escrow payment with actual payment details
+      // Update escrow payment status to funded
       const { error: updateError } = await supabase.rpc('update_escrow_payment_status', {
         p_escrow_id: escrow,
         p_status: 'funded',
@@ -55,6 +60,8 @@ export function TaskActions({
       });
 
       if (updateError) throw updateError;
+
+      console.log('Escrow status updated to funded');
 
       // Update task status
       const { error: taskError } = await supabase
@@ -64,6 +71,7 @@ export function TaskActions({
 
       if (taskError) throw taskError;
 
+      console.log('Task status updated to in_progress');
       onStatusChange();
     } catch (err) {
       console.error('Payment error:', err);
