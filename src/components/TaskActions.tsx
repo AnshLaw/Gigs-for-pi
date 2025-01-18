@@ -73,12 +73,25 @@ export function TaskActions({
     setError(null);
 
     try {
-      // Create task submission
+      // First get the user's profile ID
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('pi_user_id', user.id)
+        .single();
+
+      if (profileError) throw profileError;
+      if (!profile) throw new Error('Profile not found');
+
+      // Create task submission with profile ID
       const { data: submission, error: submissionError } = await supabase
         .from('task_submissions')
         .insert({
           task_id: taskId,
-          executor_id: (await supabase.auth.getUser()).data.user?.id,
+          executor_id: profile.id,
           content: 'Task completed and delivered',
           status: 'pending'
         })
@@ -90,6 +103,7 @@ export function TaskActions({
 
       onStatusChange();
     } catch (err) {
+      console.error('Delivery error:', err);
       setError(err instanceof Error ? err.message : 'Failed to mark as delivered');
     } finally {
       setLoading(false);
@@ -142,6 +156,7 @@ export function TaskActions({
 
       onStatusChange();
     } catch (err) {
+      console.error('Approval error:', err);
       setError(err instanceof Error ? err.message : 'Failed to approve task');
     } finally {
       setLoading(false);
