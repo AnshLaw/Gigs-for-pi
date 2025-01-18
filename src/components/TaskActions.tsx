@@ -13,12 +13,6 @@ interface TaskActionsProps {
   onStatusChange: () => void;
 }
 
-interface PaymentResult {
-  status: string;
-  paymentId: string;
-  txid: string;
-}
-
 export function TaskActions({ 
   taskId, 
   status, 
@@ -35,30 +29,41 @@ export function TaskActions({
     setError(null);
 
     try {
-      // Create escrow payment
-      const result = await initiatePayment(bidAmount) as PaymentResult;
+      // Create escrow payment record first
+      const { data: escrow, error: escrowError } = await supabase.rpc('create_escrow_payment', {
+        p_task_id: taskId,
+        p_bid_id: null, // This will be updated after payment
+        p_amount: bidAmount,
+        p_payment_id: 'pending' // Temporary value
+      });
+
+      if (escrowError) throw escrowError;
+      if (!escrow) throw new Error('Failed to create escrow record');
+
+      // Initiate Pi payment
+      const result = await initiatePayment(bidAmount);
       
       if (!result?.paymentId || !result?.txid) {
         throw new Error('Payment failed');
       }
 
-      // Create escrow payment record
-      const { error: escrowError } = await supabase.rpc('create_escrow_payment', {
-        p_task_id: taskId,
-        p_amount: bidAmount,
-        p_payment_id: result.paymentId
-      });
-
-      if (escrowError) throw escrowError;
-
-      // Update escrow payment status
-      const { error: statusError } = await supabase.rpc('update_escrow_payment_status', {
-        p_escrow_id: result.paymentId,
+      // Update escrow payment with actual payment details
+      const { error: updateError } = await supabase.rpc('update_escrow_payment_status', {
+        p_escrow_id: escrow,
         p_status: 'funded',
         p_txid: result.txid
       });
 
-      if (statusError) throw statusError;
+      if (updateError) throw updateError;
+
+      // Update task status
+      const { error: taskError } = await supabase
+        .from('tasks')
+        .update({ status: 'in_progress' })
+        .eq('id', taskId);
+
+      if (taskError) throw taskError;
+
       onStatusChange();
     } catch (err) {
       console.error('Payment error:', err);
