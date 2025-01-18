@@ -42,14 +42,23 @@ export function TaskActions({
         throw new Error('Payment failed');
       }
 
-      // Update escrow payment status in database
-      const { error: dbError } = await supabase.rpc('update_escrow_payment_status', {
+      // Create escrow payment record
+      const { error: escrowError } = await supabase.rpc('create_escrow_payment', {
+        p_task_id: taskId,
+        p_amount: bidAmount,
+        p_payment_id: result.paymentId
+      });
+
+      if (escrowError) throw escrowError;
+
+      // Update escrow payment status
+      const { error: statusError } = await supabase.rpc('update_escrow_payment_status', {
         p_escrow_id: result.paymentId,
         p_status: 'funded',
         p_txid: result.txid
       });
 
-      if (dbError) throw dbError;
+      if (statusError) throw statusError;
       onStatusChange();
     } catch (err) {
       console.error('Payment error:', err);
@@ -64,12 +73,21 @@ export function TaskActions({
     setError(null);
 
     try {
-      const { error: submissionError } = await supabase.rpc('submit_task_completion', {
-        p_task_id: taskId,
-        p_content: 'Task completed and delivered'
-      });
+      // Create task submission
+      const { data: submission, error: submissionError } = await supabase
+        .from('task_submissions')
+        .insert({
+          task_id: taskId,
+          executor_id: (await supabase.auth.getUser()).data.user?.id,
+          content: 'Task completed and delivered',
+          status: 'pending'
+        })
+        .select()
+        .single();
 
       if (submissionError) throw submissionError;
+      if (!submission) throw new Error('Failed to create submission');
+
       onStatusChange();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to mark as delivered');
@@ -88,21 +106,40 @@ export function TaskActions({
         .from('task_submissions')
         .select('id')
         .eq('task_id', taskId)
+        .eq('status', 'pending')
         .order('created_at', { ascending: false })
         .limit(1);
 
       if (fetchError) throw fetchError;
-      if (!submissions?.length) throw new Error('No submission found');
+      if (!submissions?.length) throw new Error('No pending submission found');
 
-      // Approve the submission
-      const { error: approvalError } = await supabase.rpc('review_task_submission', {
+      // Get escrow payment
+      const { data: escrow, error: escrowError } = await supabase
+        .from('escrow_payments')
+        .select('id')
+        .eq('task_id', taskId)
+        .eq('status', 'funded')
+        .single();
+
+      if (escrowError) throw escrowError;
+      if (!escrow) throw new Error('No funded escrow payment found');
+
+      // Approve the submission and release payment
+      const { error: releaseError } = await supabase.rpc('release_escrow_payment', {
         p_task_id: taskId,
-        p_submission_id: submissions[0].id,
-        p_approved: true,
-        p_feedback: 'Task approved and completed'
+        p_escrow_id: escrow.id
       });
 
-      if (approvalError) throw approvalError;
+      if (releaseError) throw releaseError;
+
+      // Update submission status
+      const { error: updateError } = await supabase
+        .from('task_submissions')
+        .update({ status: 'approved' })
+        .eq('id', submissions[0].id);
+
+      if (updateError) throw updateError;
+
       onStatusChange();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to approve task');
