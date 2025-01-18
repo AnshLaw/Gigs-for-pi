@@ -40,21 +40,21 @@ export function TaskActions({
       console.log('Payment successful:', result);
 
       // Then create and fund the escrow payment record
-      const { data: escrow, error: escrowError } = await supabase.rpc('create_escrow_payment', {
+      const { data: escrowId, error: escrowError } = await supabase.rpc('create_escrow_payment', {
         p_task_id: taskId,
-        p_bid_id: null,
+        p_bid_id: null, // We don't need bid_id for direct payments
         p_amount: bidAmount,
         p_payment_id: result.paymentId
       });
 
       if (escrowError) throw escrowError;
-      if (!escrow) throw new Error('Failed to create escrow record');
+      if (!escrowId) throw new Error('Failed to create escrow record');
 
-      console.log('Escrow created:', escrow);
+      console.log('Escrow created with ID:', escrowId);
 
       // Update escrow payment status to funded
       const { error: updateError } = await supabase.rpc('update_escrow_payment_status', {
-        p_escrow_id: escrow,
+        p_escrow_id: escrowId,
         p_status: 'funded',
         p_txid: result.txid
       });
@@ -63,19 +63,22 @@ export function TaskActions({
 
       console.log('Escrow status updated to funded');
 
-      // Update task status
+      // Update task status to in_progress
       const { error: taskError } = await supabase
         .from('tasks')
         .update({ status: 'in_progress' })
-        .eq('id', taskId);
+        .eq('id', taskId)
+        .eq('status', 'open'); // Only update if still open
 
       if (taskError) throw taskError;
 
       console.log('Task status updated to in_progress');
+      
+      // Notify parent component to refresh task data
       onStatusChange();
     } catch (err) {
-      console.error('Payment error:', err);
-      setError(err instanceof Error ? err.message : 'Payment failed');
+      console.error('Payment/escrow error:', err);
+      setError(err instanceof Error ? err.message : 'Payment process failed');
     } finally {
       setLoading(false);
     }
@@ -86,7 +89,7 @@ export function TaskActions({
     setError(null);
 
     try {
-      // First get the user's profile ID
+      // Get the user's profile ID
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
@@ -99,21 +102,19 @@ export function TaskActions({
       if (profileError) throw profileError;
       if (!profile) throw new Error('Profile not found');
 
-      // Create task submission with profile ID
-      const { data: submission, error: submissionError } = await supabase
+      // Create task submission
+      const { error: submissionError } = await supabase
         .from('task_submissions')
         .insert({
           task_id: taskId,
           executor_id: profile.id,
           content: 'Task completed and delivered',
           status: 'pending'
-        })
-        .select()
-        .single();
+        });
 
       if (submissionError) throw submissionError;
-      if (!submission) throw new Error('Failed to create submission');
 
+      console.log('Task marked as delivered');
       onStatusChange();
     } catch (err) {
       console.error('Delivery error:', err);
@@ -128,7 +129,7 @@ export function TaskActions({
     setError(null);
 
     try {
-      // Get the latest submission
+      // Get the latest pending submission
       const { data: submissions, error: fetchError } = await supabase
         .from('task_submissions')
         .select('id')
@@ -140,7 +141,7 @@ export function TaskActions({
       if (fetchError) throw fetchError;
       if (!submissions?.length) throw new Error('No pending submission found');
 
-      // Get escrow payment
+      // Get the funded escrow payment
       const { data: escrow, error: escrowError } = await supabase
         .from('escrow_payments')
         .select('id')
@@ -151,7 +152,7 @@ export function TaskActions({
       if (escrowError) throw escrowError;
       if (!escrow) throw new Error('No funded escrow payment found');
 
-      // Approve the submission and release payment
+      // Release the escrow payment
       const { error: releaseError } = await supabase.rpc('release_escrow_payment', {
         p_task_id: taskId,
         p_escrow_id: escrow.id
@@ -167,6 +168,7 @@ export function TaskActions({
 
       if (updateError) throw updateError;
 
+      console.log('Task approved and payment released');
       onStatusChange();
     } catch (err) {
       console.error('Approval error:', err);
