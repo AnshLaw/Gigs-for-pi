@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CheckCircle, AlertCircle } from 'lucide-react';
 import { initiatePayment } from '../lib/payments';
 import { supabase } from '../lib/supabase';
@@ -25,23 +25,66 @@ export function TaskActions({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPendingHandler, setShowPendingHandler] = useState(false);
+  const [hasAcceptedBid, setHasAcceptedBid] = useState(false);
+
+  // Check if there's an accepted bid when component mounts
+  useEffect(() => {
+    const checkAcceptedBid = async () => {
+      try {
+        const { error: bidError } = await supabase
+          .from('bids')
+          .select('id')
+          .eq('task_id', taskId)
+          .eq('status', 'accepted')
+          .single();
+
+        if (bidError) {
+          if (bidError.code !== 'PGRST116') { // No rows returned
+            console.error('Error checking accepted bid:', bidError);
+          }
+          setHasAcceptedBid(false);
+        } else {
+          setHasAcceptedBid(true);
+        }
+      } catch (err) {
+        console.error('Error checking accepted bid:', err);
+        setHasAcceptedBid(false);
+      }
+    };
+
+    if (status === 'open') {
+      checkAcceptedBid();
+    }
+  }, [taskId, status]);
 
   const handleInitiatePayment = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      // First initiate and complete the Pi payment
+      // Verify there's an accepted bid first
+      const { data: acceptedBid, error: bidError } = await supabase
+        .from('bids')
+        .select('id')
+        .eq('task_id', taskId)
+        .eq('status', 'accepted')
+        .single();
+
+      if (bidError) {
+        throw new Error('Please accept a bid before funding escrow');
+      }
+
+      // Initiate and complete the Pi payment
       const paymentResult = await initiatePayment(bidAmount);
       
       if (!paymentResult?.paymentId || !paymentResult?.txid) {
         throw new Error('Payment failed - missing payment details');
       }
 
-      // Then create and fund the escrow payment record
+      // Create and fund the escrow payment record
       const { data: escrowId, error: escrowError } = await supabase.rpc('create_escrow_payment', {
         p_task_id: taskId,
-        p_bid_id: null, // We don't need bid_id for direct payments
+        p_bid_id: acceptedBid.id,
         p_amount: bidAmount,
         p_payment_id: paymentResult.paymentId
       });
@@ -201,14 +244,22 @@ export function TaskActions({
       ) : (
         <>
           {isCreator && status === 'open' && (
-            <Button
-              onClick={handleInitiatePayment}
-              isLoading={loading}
-              className="w-full"
-            >
-              <CheckCircle className="h-4 w-4 mr-2" />
-              Fund Escrow ({bidAmount} π)
-            </Button>
+            <>
+              {!hasAcceptedBid ? (
+                <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-md">
+                  Accept a bid to proceed with funding the escrow.
+                </div>
+              ) : (
+                <Button
+                  onClick={handleInitiatePayment}
+                  isLoading={loading}
+                  className="w-full"
+                >
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                  Fund Escrow ({bidAmount} π)
+                </Button>
+              )}
+            </>
           )}
 
           {isExecutor && status === 'in_progress' && (
