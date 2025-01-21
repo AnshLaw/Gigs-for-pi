@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AlertCircle, Check, X } from 'lucide-react';
 import { Button } from './ui/Button';
+import { Input } from './ui/Input';
 import platformAPIClient from '../lib/platformAPIClient';
 import type { PiPayment } from '../lib/types/pi';
 
@@ -14,6 +15,9 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
+  const [manualPaymentId, setManualPaymentId] = useState('');
+  const [manualTxid, setManualTxid] = useState('');
+  const [showManualInput, setShowManualInput] = useState(false);
 
   const checkPendingPayments = async () => {
     setLoading(true);
@@ -67,14 +71,14 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
       }
 
       if (foundPayments.length === 0) {
-        setError('No pending payments found. If you believe this is incorrect, please try again.');
+        setError('No pending payments found automatically. You can try completing the payment manually.');
       } else {
         console.log('Setting pending payments:', foundPayments);
         setPendingPayments(foundPayments);
       }
     } catch (err) {
       console.error('Error checking pending payments:', err);
-      setError('Failed to check pending payments. Please try again.');
+      setError('Failed to check pending payments. Please try again or use manual completion.');
     } finally {
       setLoading(false);
     }
@@ -125,6 +129,44 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
     }
   };
 
+  const handleManualComplete = async () => {
+    if (!manualPaymentId || !manualTxid) {
+      setError('Please provide both Payment ID and Transaction ID');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      // First check if payment exists and its status
+      const response = await platformAPIClient.get(`/payments/${manualPaymentId}`);
+      const currentStatus = response.data.status;
+
+      if (currentStatus === 'completed') {
+        console.log('Payment already completed:', manualPaymentId);
+        onComplete();
+        return;
+      }
+
+      // Complete the payment
+      await platformAPIClient.post(`/payments/${manualPaymentId}/complete`, {
+        txid: manualTxid
+      });
+
+      console.log('Payment completed manually:', manualPaymentId);
+      setManualPaymentId('');
+      setManualTxid('');
+      setShowManualInput(false);
+      onComplete();
+    } catch (err) {
+      console.error('Error completing payment manually:', err);
+      setError(err instanceof Error ? err.message : 'Failed to complete payment');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {error && (
@@ -134,14 +176,49 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
         </div>
       )}
 
-      <Button
-        onClick={checkPendingPayments}
-        isLoading={loading}
-        variant="secondary"
-        className="w-full"
-      >
-        Check Pending Payments
-      </Button>
+      <div className="flex gap-2">
+        <Button
+          onClick={checkPendingPayments}
+          isLoading={loading}
+          variant="secondary"
+          className="flex-1"
+        >
+          Check Pending Payments
+        </Button>
+        <Button
+          onClick={() => setShowManualInput(!showManualInput)}
+          variant="secondary"
+          className="flex-none"
+        >
+          {showManualInput ? 'Hide Manual' : 'Manual Complete'}
+        </Button>
+      </div>
+
+      {showManualInput && (
+        <div className="space-y-4 p-4 bg-gray-50 rounded-lg">
+          <h3 className="text-sm font-medium text-gray-900">Manual Payment Completion</h3>
+          <Input
+            label="Payment ID"
+            value={manualPaymentId}
+            onChange={(e) => setManualPaymentId(e.target.value)}
+            placeholder="Enter payment ID"
+          />
+          <Input
+            label="Transaction ID"
+            value={manualTxid}
+            onChange={(e) => setManualTxid(e.target.value)}
+            placeholder="Enter transaction ID"
+          />
+          <Button
+            onClick={handleManualComplete}
+            isLoading={loading}
+            className="w-full"
+          >
+            <Check className="h-4 w-4 mr-2" />
+            Complete Payment
+          </Button>
+        </div>
+      )}
 
       {pendingPayments.length > 0 && (
         <div className="space-y-4">
