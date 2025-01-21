@@ -12,6 +12,25 @@ async function handleIncompletePayment(payment: any): Promise<void> {
     const paymentId = payment.identifier;
     const txid = payment.transaction?.txid;
     
+    if (!paymentId) {
+      console.log('No payment ID found for incomplete payment');
+      return;
+    }
+
+    // Get payment status from Pi platform
+    const response = await platformAPIClient.get(`/payments/${paymentId}`);
+    const paymentStatus = response.data.status;
+
+    if (txid && paymentStatus === 'completed') {
+      console.log('Payment already completed:', paymentId);
+      return;
+    }
+
+    if (paymentStatus === 'cancelled' || paymentStatus === 'expired') {
+      console.log('Payment already cancelled/expired:', paymentId);
+      return;
+    }
+
     if (txid) {
       // Complete the payment if there's a transaction ID
       await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
@@ -23,14 +42,37 @@ async function handleIncompletePayment(payment: any): Promise<void> {
     }
   } catch (err) {
     console.error('Error handling incomplete payment:', err);
-    throw err;
+    // Don't throw, just log the error and continue
+    console.log('Continuing despite incomplete payment error');
   }
+}
+
+async function clearIncompletePayments(): Promise<void> {
+  return new Promise((resolve, _reject) => {
+    try {
+      window.Pi.authenticate(['payments'], async (auth: any) => {
+        if (auth.payments && auth.payments.length > 0) {
+          console.log('Found incomplete payments:', auth.payments);
+          for (const payment of auth.payments) {
+            await handleIncompletePayment(payment);
+          }
+        }
+        resolve();
+      });
+    } catch (err) {
+      console.error('Error clearing incomplete payments:', err);
+      resolve(); // Resolve anyway to continue with new payment
+    }
+  });
 }
 
 export async function initiatePayment(amount: number): Promise<PaymentResult> {
   if (!window.Pi) {
     throw new Error('Please use Pi Browser');
   }
+
+  // First clear any incomplete payments
+  await clearIncompletePayments();
 
   return new Promise((resolve, reject) => {
     const paymentData: PaymentData = {
@@ -93,17 +135,7 @@ export async function initiatePayment(amount: number): Promise<PaymentResult> {
 
     try {
       console.log('Creating payment with data:', paymentData);
-      // Handle any incomplete payments first
-      window.Pi.authenticate(['payments'], async (auth: any) => {
-        if (auth.payments && auth.payments.length > 0) {
-          console.log('Found incomplete payments:', auth.payments);
-          for (const payment of auth.payments) {
-            await handleIncompletePayment(payment);
-          }
-        }
-        // Then create the new payment
-        window.Pi.createPayment(paymentData, callbacks);
-      });
+      window.Pi.createPayment(paymentData, callbacks);
     } catch (err) {
       console.error('Error creating payment:', err);
       reject(new Error('Failed to create payment. Please try again.'));
