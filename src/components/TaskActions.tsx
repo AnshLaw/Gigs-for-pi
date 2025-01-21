@@ -42,7 +42,7 @@ export function TaskActions({
         .from('tasks')
         .select(`
           status,
-          bids (
+          bids!inner (
             id,
             status
           ),
@@ -56,18 +56,34 @@ export function TaskActions({
           )
         `)
         .eq('id', taskId)
+        .eq('bids.status', 'accepted')
         .single();
 
-      if (taskError) throw taskError;
+      if (taskError) {
+        // If no accepted bid is found, check if there's any bid accepted
+        const { data: acceptedBid } = await supabase
+          .from('bids')
+          .select('id')
+          .eq('task_id', taskId)
+          .eq('status', 'accepted')
+          .single();
+
+        setTaskState({
+          hasAcceptedBid: Boolean(acceptedBid),
+          hasFundedEscrow: false,
+          hasSubmission: false
+        });
+        return;
+      }
 
       setTaskState({
-        hasAcceptedBid: task.bids?.some(bid => bid.status === 'accepted') ?? false,
+        hasAcceptedBid: true,
         hasFundedEscrow: task.escrow_payments?.some(ep => ep.status === 'funded') ?? false,
         hasSubmission: task.task_submissions?.some(sub => sub.status === 'pending') ?? false
       });
     } catch (err) {
       console.error('Error checking task state:', err);
-      setError('Failed to check task status');
+      // Don't set error here as it might be a normal case of no accepted bid
     }
   };
 
@@ -245,52 +261,7 @@ export function TaskActions({
     }
   };
 
-  const renderButton = () => {
-    if (!isCreator && !isExecutor) return null;
-
-    if (isCreator) {
-      if (status === 'open' && taskState.hasAcceptedBid && !taskState.hasFundedEscrow) {
-        return (
-          <Button
-            onClick={handleInitiatePayment}
-            isLoading={loading}
-            className="w-full"
-          >
-            <CheckCircle className="h-4 w-4 mr-2" />
-            Fund Escrow ({bidAmount} π)
-          </Button>
-        );
-      }
-
-      if (status === 'in_progress' && taskState.hasSubmission) {
-        return (
-          <Button
-            onClick={handleApproval}
-            isLoading={loading}
-            className="w-full"
-          >
-            <CheckCircle className="h-4 w-4 mr-2" />
-            Approve & Release Payment
-          </Button>
-        );
-      }
-    }
-
-    if (isExecutor && status === 'in_progress' && !taskState.hasSubmission) {
-      return (
-        <Button
-          onClick={handleDelivery}
-          isLoading={loading}
-          className="w-full"
-        >
-          <CheckCircle className="h-4 w-4 mr-2" />
-          Mark as Delivered
-        </Button>
-      );
-    }
-
-    return null;
-  };
+  if (!isCreator && !isExecutor) return null;
 
   return (
     <div className="space-y-4">
@@ -300,7 +271,39 @@ export function TaskActions({
           <p>{error}</p>
         </div>
       )}
-      {renderButton()}
+
+      {isCreator && status === 'open' && taskState.hasAcceptedBid && !taskState.hasFundedEscrow && (
+        <Button
+          onClick={handleInitiatePayment}
+          isLoading={loading}
+          className="w-full"
+        >
+          <CheckCircle className="h-4 w-4 mr-2" />
+          Fund Escrow ({bidAmount} π)
+        </Button>
+      )}
+
+      {isExecutor && status === 'in_progress' && !taskState.hasSubmission && (
+        <Button
+          onClick={handleDelivery}
+          isLoading={loading}
+          className="w-full"
+        >
+          <CheckCircle className="h-4 w-4 mr-2" />
+          Mark as Delivered
+        </Button>
+      )}
+
+      {isCreator && status === 'in_progress' && taskState.hasSubmission && (
+        <Button
+          onClick={handleApproval}
+          isLoading={loading}
+          className="w-full"
+        >
+          <CheckCircle className="h-4 w-4 mr-2" />
+          Approve & Release Payment
+        </Button>
+      )}
     </div>
   );
 }
