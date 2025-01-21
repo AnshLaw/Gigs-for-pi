@@ -23,8 +23,16 @@ export async function initiatePayment(amount: number): Promise<PaymentResult> {
       onReadyForServerApproval: async function(paymentId: string) {
         try {
           console.log('Payment ready for approval:', paymentId);
+          // First verify the payment
           const response = await platformAPIClient.get(`/payments/${paymentId}`);
-          console.log('Payment status:', response.data);
+          const payment = response.data;
+          
+          // Verify payment details
+          if (payment.amount !== amount) {
+            throw new Error('Payment amount mismatch');
+          }
+          
+          // Approve the payment
           await platformAPIClient.post(`/payments/${paymentId}/approve`);
           console.log('Payment approved');
         } catch (err) {
@@ -36,8 +44,19 @@ export async function initiatePayment(amount: number): Promise<PaymentResult> {
       onReadyForServerCompletion: async function(paymentId: string, txid: string) {
         try {
           console.log('Payment ready for completion:', { paymentId, txid });
+          
+          // Verify the transaction on the blockchain
+          const txResponse = await platformAPIClient.get(`/payments/${paymentId}/transaction`);
+          const transaction = txResponse.data;
+          
+          if (!transaction || !transaction.verified) {
+            throw new Error('Transaction verification failed');
+          }
+          
+          // Complete the payment
           await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
           console.log('Payment completed successfully');
+          
           resolve({ 
             status: "completed", 
             paymentId, 
@@ -72,10 +91,23 @@ export async function initiatePayment(amount: number): Promise<PaymentResult> {
 
 export async function completePayment(paymentId: string, txid: string): Promise<PaymentResult> {
   try {
-    console.log('Completing payment:', { paymentId, txid });
+    // Verify the transaction first
+    const txResponse = await platformAPIClient.get(`/payments/${paymentId}/transaction`);
+    const transaction = txResponse.data;
+    
+    if (!transaction || !transaction.verified) {
+      throw new Error('Transaction verification failed');
+    }
+    
+    // Complete the payment
     await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
     console.log('Payment completed successfully');
-    return { status: "completed", paymentId, txid };
+    
+    return { 
+      status: "completed", 
+      paymentId, 
+      txid 
+    };
   } catch (err) {
     console.error("Payment completion failed:", err);
     throw new Error('Payment completion failed. Please try again.');
