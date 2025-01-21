@@ -18,8 +18,11 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
   const checkPendingPayments = async () => {
     setLoading(true);
     setError(null);
+    setPendingPayments([]); // Clear existing payments
     
     try {
+      let foundPayments: PendingPayment[] = [];
+
       // First try to get incomplete payments from Pi SDK
       await new Promise<void>((resolve) => {
         window.Pi.authenticate(
@@ -28,17 +31,17 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
             console.log('Found incomplete payment:', payment);
             try {
               const response = await platformAPIClient.get(`/payments/${payment.identifier}`);
-              setPendingPayments([{
+              foundPayments.push({
                 ...payment,
                 ...response.data,
-                status: response.data.status || payment.status // Ensure status is always defined
-              }]);
+                status: response.data.status || payment.status
+              });
             } catch (err) {
               console.error('Error fetching payment details:', err);
-              setPendingPayments([{
+              foundPayments.push({
                 ...payment,
                 api_status: 'error'
-              }]);
+              });
             }
             resolve();
           },
@@ -50,19 +53,25 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
       });
 
       // If no payments found in SDK, try to get from platform API
-      if (pendingPayments.length === 0) {
-        const response = await platformAPIClient.get('/payments');
-        const payments = response.data.filter((p: PendingPayment) => 
-          p.status === 'pending' || p.status === 'submitted'
-        );
-        if (payments.length > 0) {
-          console.log('Found pending payments from API:', payments);
-          setPendingPayments(payments);
+      if (foundPayments.length === 0) {
+        try {
+          const response = await platformAPIClient.get('/payments');
+          const apiPayments = response.data.filter((p: PendingPayment) => 
+            p.status === 'pending' || p.status === 'submitted'
+          );
+          if (apiPayments.length > 0) {
+            console.log('Found pending payments from API:', apiPayments);
+            foundPayments = [...foundPayments, ...apiPayments];
+          }
+        } catch (err) {
+          console.error('Error fetching payments from API:', err);
         }
       }
 
-      if (pendingPayments.length === 0) {
+      if (foundPayments.length === 0) {
         setError('No pending payments found. If you believe this is incorrect, please try again.');
+      } else {
+        setPendingPayments(foundPayments);
       }
     } catch (err) {
       console.error('Error checking pending payments:', err);
