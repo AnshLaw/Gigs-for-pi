@@ -7,6 +7,26 @@ interface PaymentResult {
   txid: string;
 }
 
+async function handleIncompletePayment(payment: any): Promise<void> {
+  try {
+    const paymentId = payment.identifier;
+    const txid = payment.transaction?.txid;
+    
+    if (txid) {
+      // Complete the payment if there's a transaction ID
+      await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
+      console.log('Completed incomplete payment:', paymentId);
+    } else {
+      // Cancel the payment if there's no transaction
+      await platformAPIClient.post(`/payments/${paymentId}/cancel`);
+      console.log('Cancelled incomplete payment:', paymentId);
+    }
+  } catch (err) {
+    console.error('Error handling incomplete payment:', err);
+    throw err;
+  }
+}
+
 export async function initiatePayment(amount: number): Promise<PaymentResult> {
   if (!window.Pi) {
     throw new Error('Please use Pi Browser');
@@ -45,14 +65,6 @@ export async function initiatePayment(amount: number): Promise<PaymentResult> {
         try {
           console.log('Payment ready for completion:', { paymentId, txid });
           
-          // Verify the transaction on the blockchain
-          const txResponse = await platformAPIClient.get(`/payments/${paymentId}/transaction`);
-          const transaction = txResponse.data;
-          
-          if (!transaction || !transaction.verified) {
-            throw new Error('Transaction verification failed');
-          }
-          
           // Complete the payment
           await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
           console.log('Payment completed successfully');
@@ -81,7 +93,17 @@ export async function initiatePayment(amount: number): Promise<PaymentResult> {
 
     try {
       console.log('Creating payment with data:', paymentData);
-      window.Pi.createPayment(paymentData, callbacks);
+      // Handle any incomplete payments first
+      window.Pi.authenticate(['payments'], async (auth: any) => {
+        if (auth.payments && auth.payments.length > 0) {
+          console.log('Found incomplete payments:', auth.payments);
+          for (const payment of auth.payments) {
+            await handleIncompletePayment(payment);
+          }
+        }
+        // Then create the new payment
+        window.Pi.createPayment(paymentData, callbacks);
+      });
     } catch (err) {
       console.error('Error creating payment:', err);
       reject(new Error('Failed to create payment. Please try again.'));
@@ -91,14 +113,6 @@ export async function initiatePayment(amount: number): Promise<PaymentResult> {
 
 export async function completePayment(paymentId: string, txid: string): Promise<PaymentResult> {
   try {
-    // Verify the transaction first
-    const txResponse = await platformAPIClient.get(`/payments/${paymentId}/transaction`);
-    const transaction = txResponse.data;
-    
-    if (!transaction || !transaction.verified) {
-      throw new Error('Transaction verification failed');
-    }
-    
     // Complete the payment
     await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
     console.log('Payment completed successfully');
