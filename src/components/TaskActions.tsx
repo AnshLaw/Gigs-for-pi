@@ -3,7 +3,6 @@ import { CheckCircle, AlertCircle } from 'lucide-react';
 import { initiatePayment } from '../lib/payments';
 import { supabase } from '../lib/supabase';
 import { Button } from './ui/Button';
-import { PendingPaymentHandler } from './PendingPaymentHandler';
 
 interface TaskActionsProps {
   taskId: string;
@@ -24,48 +23,51 @@ export function TaskActions({
 }: TaskActionsProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showPendingHandler, setShowPendingHandler] = useState(false);
-  const [hasAcceptedBid, setHasAcceptedBid] = useState(false);
-  const [hasFundedEscrow, setHasFundedEscrow] = useState(false);
-  const [hasSubmission, setHasSubmission] = useState(false);
+  const [taskState, setTaskState] = useState({
+    hasAcceptedBid: false,
+    hasFundedEscrow: false,
+    hasSubmission: false
+  });
 
   useEffect(() => {
-    checkTaskStatus();
+    checkTaskState();
   }, [taskId, status]);
 
-  const checkTaskStatus = async () => {
+  const checkTaskState = async () => {
+    if (!taskId) return;
+
     try {
-      // Check if there's an accepted bid
-      const { data: acceptedBid } = await supabase
-        .from('bids')
-        .select('id')
-        .eq('task_id', taskId)
-        .eq('status', 'accepted')
+      // Get task details with related data
+      const { data: task, error: taskError } = await supabase
+        .from('tasks')
+        .select(`
+          status,
+          bids (
+            id,
+            status
+          ),
+          escrow_payments (
+            id,
+            status
+          ),
+          task_submissions (
+            id,
+            status
+          )
+        `)
+        .eq('id', taskId)
         .single();
 
-      setHasAcceptedBid(!!acceptedBid);
+      if (taskError) throw taskError;
 
-      // Check if escrow is funded
-      const { data: escrow } = await supabase
-        .from('escrow_payments')
-        .select('id')
-        .eq('task_id', taskId)
-        .eq('status', 'funded')
-        .single();
-
-      setHasFundedEscrow(!!escrow);
-
-      // Check if there's a pending submission
-      const { data: submission } = await supabase
-        .from('task_submissions')
-        .select('id')
-        .eq('task_id', taskId)
-        .eq('status', 'pending')
-        .single();
-
-      setHasSubmission(!!submission);
+      setTaskState({
+        hasAcceptedBid: task.bids?.some(bid => bid.status === 'accepted') ?? false,
+        hasFundedEscrow: task.escrow_payments?.some(ep => ep.status === 'funded') ?? false,
+        hasSubmission: task.task_submissions?.some(sub => sub.status === 'pending') ?? false
+      });
     } catch (err) {
-      console.error('Error checking task status:', err);
+      console.error('Error checking task state:', err);
+      setError('Failed to check task status');
     }
   };
 
@@ -74,7 +76,7 @@ export function TaskActions({
     setError(null);
 
     try {
-      // First check if there's an accepted bid
+      // Get the accepted bid
       const { data: acceptedBid, error: bidError } = await supabase
         .from('bids')
         .select('id, amount')
@@ -83,7 +85,7 @@ export function TaskActions({
         .single();
 
       if (bidError || !acceptedBid) {
-        throw new Error('No accepted bid found. Please accept a bid first.');
+        throw new Error('No accepted bid found');
       }
 
       // Check if escrow is already funded
@@ -95,20 +97,17 @@ export function TaskActions({
         .single();
 
       if (existingEscrow) {
-        throw new Error('Escrow is already funded for this task.');
+        throw new Error('Escrow is already funded');
       }
 
       // Initiate Pi payment
-      console.log('Initiating payment for amount:', acceptedBid.amount);
       const paymentResult = await initiatePayment(acceptedBid.amount);
       
       if (!paymentResult?.paymentId || !paymentResult?.txid) {
         throw new Error('Payment failed - missing payment details');
       }
 
-      console.log('Payment successful:', paymentResult);
-
-      // Create and fund the escrow payment record
+      // Create escrow payment record
       const { data: escrowId, error: escrowError } = await supabase.rpc('create_escrow_payment', {
         p_task_id: taskId,
         p_bid_id: acceptedBid.id,
@@ -116,17 +115,8 @@ export function TaskActions({
         p_payment_id: paymentResult.paymentId
       });
 
-      if (escrowError) {
-        console.error('Escrow creation error:', escrowError);
-        throw new Error('Failed to create escrow record');
-      }
-
-      if (!escrowId) {
-        console.error('No escrow ID returned');
-        throw new Error('Failed to create escrow record');
-      }
-
-      console.log('Escrow created with ID:', escrowId);
+      if (escrowError) throw escrowError;
+      if (!escrowId) throw new Error('Failed to create escrow record');
 
       // Update escrow payment status to funded
       const { error: updateError } = await supabase.rpc('update_escrow_payment_status', {
@@ -135,25 +125,18 @@ export function TaskActions({
         p_txid: paymentResult.txid
       });
 
-      if (updateError) {
-        console.error('Escrow status update error:', updateError);
-        throw new Error('Failed to update escrow status');
-      }
+      if (updateError) throw updateError;
 
       // Update task status to in_progress
       const { error: taskError } = await supabase
         .from('tasks')
         .update({ status: 'in_progress' })
         .eq('id', taskId)
-        .eq('status', 'open'); // Only update if still open
+        .eq('status', 'open');
 
-      if (taskError) {
-        console.error('Task status update error:', taskError);
-        throw new Error('Failed to update task status');
-      }
+      if (taskError) throw taskError;
 
-      console.log('Task and escrow updated successfully');
-      setHasFundedEscrow(true);
+      await checkTaskState();
       onStatusChange();
     } catch (err) {
       console.error('Payment/escrow error:', err);
@@ -170,7 +153,7 @@ export function TaskActions({
     setError(null);
 
     try {
-      // Get the user's profile ID
+      // Get user's profile
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
@@ -195,8 +178,7 @@ export function TaskActions({
 
       if (submissionError) throw submissionError;
 
-      console.log('Task marked as delivered');
-      setHasSubmission(true);
+      await checkTaskState();
       onStatusChange();
     } catch (err) {
       console.error('Delivery error:', err);
@@ -211,7 +193,7 @@ export function TaskActions({
     setError(null);
 
     try {
-      // First check if escrow is funded
+      // Get funded escrow payment
       const { data: escrow, error: escrowError } = await supabase
         .from('escrow_payments')
         .select('id')
@@ -220,10 +202,10 @@ export function TaskActions({
         .single();
 
       if (escrowError || !escrow) {
-        throw new Error('Task escrow has not been funded yet. Please fund the escrow first.');
+        throw new Error('No funded escrow payment found');
       }
 
-      // Then check for pending submission
+      // Get pending submission
       const { data: submissions, error: fetchError } = await supabase
         .from('task_submissions')
         .select('id')
@@ -234,10 +216,10 @@ export function TaskActions({
 
       if (fetchError) throw fetchError;
       if (!submissions?.length) {
-        throw new Error('No pending submission found. Please wait for the executor to mark the task as delivered.');
+        throw new Error('No pending submission found');
       }
 
-      // Release the escrow payment
+      // Release escrow payment
       const { error: releaseError } = await supabase.rpc('release_escrow_payment', {
         p_task_id: taskId,
         p_escrow_id: escrow.id
@@ -253,7 +235,7 @@ export function TaskActions({
 
       if (updateError) throw updateError;
 
-      console.log('Task approved and payment released');
+      await checkTaskState();
       onStatusChange();
     } catch (err) {
       console.error('Approval error:', err);
@@ -261,6 +243,53 @@ export function TaskActions({
     } finally {
       setLoading(false);
     }
+  };
+
+  const renderButton = () => {
+    if (!isCreator && !isExecutor) return null;
+
+    if (isCreator) {
+      if (status === 'open' && taskState.hasAcceptedBid && !taskState.hasFundedEscrow) {
+        return (
+          <Button
+            onClick={handleInitiatePayment}
+            isLoading={loading}
+            className="w-full"
+          >
+            <CheckCircle className="h-4 w-4 mr-2" />
+            Fund Escrow ({bidAmount} π)
+          </Button>
+        );
+      }
+
+      if (status === 'in_progress' && taskState.hasSubmission) {
+        return (
+          <Button
+            onClick={handleApproval}
+            isLoading={loading}
+            className="w-full"
+          >
+            <CheckCircle className="h-4 w-4 mr-2" />
+            Approve & Release Payment
+          </Button>
+        );
+      }
+    }
+
+    if (isExecutor && status === 'in_progress' && !taskState.hasSubmission) {
+      return (
+        <Button
+          onClick={handleDelivery}
+          isLoading={loading}
+          className="w-full"
+        >
+          <CheckCircle className="h-4 w-4 mr-2" />
+          Mark as Delivered
+        </Button>
+      );
+    }
+
+    return null;
   };
 
   return (
@@ -271,54 +300,7 @@ export function TaskActions({
           <p>{error}</p>
         </div>
       )}
-
-      {showPendingHandler ? (
-        <PendingPaymentHandler 
-          onComplete={() => {
-            setShowPendingHandler(false);
-            setError(null);
-          }} 
-        />
-      ) : (
-        <>
-          {isCreator && (
-            <>
-              {status === 'open' && hasAcceptedBid && !hasFundedEscrow && (
-                <Button
-                  onClick={handleInitiatePayment}
-                  isLoading={loading}
-                  className="w-full"
-                >
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  Fund Escrow ({bidAmount} π)
-                </Button>
-              )}
-
-              {status === 'in_progress' && hasSubmission && (
-                <Button
-                  onClick={handleApproval}
-                  isLoading={loading}
-                  className="w-full"
-                >
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  Approve & Release Payment
-                </Button>
-              )}
-            </>
-          )}
-
-          {isExecutor && status === 'in_progress' && !hasSubmission && (
-            <Button
-              onClick={handleDelivery}
-              isLoading={loading}
-              className="w-full"
-            >
-              <CheckCircle className="h-4 w-4 mr-2" />
-              Mark as Delivered
-            </Button>
-          )}
-        </>
-      )}
+      {renderButton()}
     </div>
   );
 }
