@@ -42,27 +42,32 @@ async function handleIncompletePayment(payment: any): Promise<void> {
     }
   } catch (err) {
     console.error('Error handling incomplete payment:', err);
-    // Don't throw, just log the error and continue
-    console.log('Continuing despite incomplete payment error');
+    throw err; // Propagate error to caller
   }
 }
 
 async function clearIncompletePayments(): Promise<void> {
-  return new Promise((resolve, _reject) => {
-    try {
-      window.Pi.authenticate(['payments'], async (auth: any) => {
-        if (auth.payments && auth.payments.length > 0) {
-          console.log('Found incomplete payments:', auth.payments);
-          for (const payment of auth.payments) {
-            await handleIncompletePayment(payment);
-          }
+  if (!window.Pi) {
+    throw new Error('Please use Pi Browser');
+  }
+
+  return new Promise((resolve, reject) => {
+    window.Pi.authenticate(['payments'], async (payment: any) => {
+      if (payment) {
+        try {
+          console.log('Found incomplete payment:', payment);
+          await handleIncompletePayment(payment);
+          resolve();
+        } catch (err) {
+          reject(err);
         }
+      } else {
         resolve();
-      });
-    } catch (err) {
-      console.error('Error clearing incomplete payments:', err);
-      resolve(); // Resolve anyway to continue with new payment
-    }
+      }
+    }, (err: Error) => {
+      console.error('Pi SDK error:', err);
+      reject(err);
+    });
   });
 }
 
@@ -72,7 +77,12 @@ export async function initiatePayment(amount: number): Promise<PaymentResult> {
   }
 
   // First clear any incomplete payments
-  await clearIncompletePayments();
+  try {
+    await clearIncompletePayments();
+  } catch (err) {
+    console.error('Error clearing incomplete payments:', err);
+    throw new Error('Please complete or cancel pending payment first');
+  }
 
   return new Promise((resolve, reject) => {
     const paymentData: PaymentData = {
