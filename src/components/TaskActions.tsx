@@ -39,7 +39,7 @@ export function TaskActions({
     if (isCreator) {
       checkBidAndEscrowStatus();
     }
-  }, [isCreator, taskId]);
+  }, [isCreator, taskId, status]);
 
   const checkBidAndEscrowStatus = async () => {
     try {
@@ -144,7 +144,8 @@ export function TaskActions({
       const { error: taskError } = await supabase
         .from('tasks')
         .update({ status: 'in_progress' })
-        .eq('id', taskId);
+        .eq('id', taskId)
+        .eq('status', 'open'); // Only update if still open
 
       if (taskError) {
         console.error('Task status update error:', taskError);
@@ -305,25 +306,40 @@ export function TaskActions({
         />
       ) : (
         <>
-          {isCreator && status === 'open' && (
+          {isCreator && (
             <>
-              {!hasAcceptedBid ? (
-                <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-md">
-                  Accept a bid to proceed with funding the escrow.
-                </div>
-              ) : !hasFundedEscrow ? (
+              {status === 'open' && (
+                <>
+                  {!hasAcceptedBid ? (
+                    <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-md">
+                      Accept a bid to proceed with funding the escrow.
+                    </div>
+                  ) : !hasFundedEscrow ? (
+                    <Button
+                      onClick={handleInitiatePayment}
+                      isLoading={loading}
+                      className="w-full"
+                    >
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Fund Escrow ({bidAmount} π)
+                    </Button>
+                  ) : (
+                    <div className="text-sm text-green-600 bg-green-50 p-3 rounded-md">
+                      Escrow has been funded. Waiting for task completion.
+                    </div>
+                  )}
+                </>
+              )}
+
+              {status === 'in_progress' && hasFundedEscrow && (
                 <Button
-                  onClick={handleInitiatePayment}
+                  onClick={handleApproval}
                   isLoading={loading}
                   className="w-full"
                 >
                   <CheckCircle className="h-4 w-4 mr-2" />
-                  Fund Escrow ({bidAmount} π)
+                  Approve & Release Payment
                 </Button>
-              ) : (
-                <div className="text-sm text-green-600 bg-green-50 p-3 rounded-md">
-                  Escrow has been funded. Waiting for task completion.
-                </div>
               )}
             </>
           )}
@@ -336,17 +352,6 @@ export function TaskActions({
             >
               <CheckCircle className="h-4 w-4 mr-2" />
               Mark as Delivered
-            </Button>
-          )}
-
-          {isCreator && status === 'in_progress' && (
-            <Button
-              onClick={handleApproval}
-              isLoading={loading}
-              className="w-full"
-            >
-              <CheckCircle className="h-4 w-4 mr-2" />
-              Approve & Release Payment
             </Button>
           )}
         </>
