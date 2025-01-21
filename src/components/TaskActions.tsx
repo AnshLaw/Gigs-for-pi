@@ -3,6 +3,7 @@ import { CheckCircle, AlertCircle } from 'lucide-react';
 import { initiatePayment } from '../lib/payments';
 import { supabase } from '../lib/supabase';
 import { Button } from './ui/Button';
+import { PendingPaymentHandler } from './PendingPaymentHandler';
 
 interface TaskActionsProps {
   taskId: string;
@@ -23,6 +24,7 @@ export function TaskActions({
 }: TaskActionsProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPendingHandler, setShowPendingHandler] = useState(false);
 
   const handleInitiatePayment = async () => {
     setLoading(true);
@@ -36,8 +38,6 @@ export function TaskActions({
       if (!paymentResult?.paymentId || !paymentResult?.txid) {
         throw new Error('Payment failed - missing payment details');
       }
-
-      console.log('Payment successful:', paymentResult);
 
       // Then create and fund the escrow payment record
       const { data: escrowId, error: escrowError } = await supabase.rpc('create_escrow_payment', {
@@ -80,6 +80,9 @@ export function TaskActions({
       onStatusChange();
     } catch (err) {
       console.error('Payment/escrow error:', err);
+      if (err instanceof Error && err.message.includes('pending payment')) {
+        setShowPendingHandler(true);
+      }
       setError(err instanceof Error ? err.message : 'Payment failed');
     } finally {
       setLoading(false);
@@ -191,37 +194,48 @@ export function TaskActions({
         </div>
       )}
 
-      {isCreator && status === 'open' && (
-        <Button
-          onClick={handleInitiatePayment}
-          isLoading={loading}
-          className="w-full"
-        >
-          <CheckCircle className="h-4 w-4 mr-2" />
-          Fund Escrow ({bidAmount} π)
-        </Button>
-      )}
+      {showPendingHandler ? (
+        <PendingPaymentHandler 
+          onComplete={() => {
+            setShowPendingHandler(false);
+            setError(null);
+          }} 
+        />
+      ) : (
+        <>
+          {isCreator && status === 'open' && (
+            <Button
+              onClick={handleInitiatePayment}
+              isLoading={loading}
+              className="w-full"
+            >
+              <CheckCircle className="h-4 w-4 mr-2" />
+              Fund Escrow ({bidAmount} π)
+            </Button>
+          )}
 
-      {isExecutor && status === 'in_progress' && (
-        <Button
-          onClick={handleDelivery}
-          isLoading={loading}
-          className="w-full"
-        >
-          <CheckCircle className="h-4 w-4 mr-2" />
-          Mark as Delivered
-        </Button>
-      )}
+          {isExecutor && status === 'in_progress' && (
+            <Button
+              onClick={handleDelivery}
+              isLoading={loading}
+              className="w-full"
+            >
+              <CheckCircle className="h-4 w-4 mr-2" />
+              Mark as Delivered
+            </Button>
+          )}
 
-      {isCreator && status === 'in_progress' && (
-        <Button
-          onClick={handleApproval}
-          isLoading={loading}
-          className="w-full"
-        >
-          <CheckCircle className="h-4 w-4 mr-2" />
-          Approve & Release Payment
-        </Button>
+          {isCreator && status === 'in_progress' && (
+            <Button
+              onClick={handleApproval}
+              isLoading={loading}
+              className="w-full"
+            >
+              <CheckCircle className="h-4 w-4 mr-2" />
+              Approve & Release Payment
+            </Button>
+          )}
+        </>
       )}
     </div>
   );
