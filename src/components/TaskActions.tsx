@@ -36,10 +36,10 @@ export function TaskActions({
   const [hasFundedEscrow, setHasFundedEscrow] = useState(false);
 
   useEffect(() => {
-    if (isCreator && status === 'open') {
+    if (isCreator) {
       checkBidAndEscrowStatus();
     }
-  }, [isCreator, status, taskId]);
+  }, [isCreator, taskId]);
 
   const checkBidAndEscrowStatus = async () => {
     try {
@@ -138,6 +138,17 @@ export function TaskActions({
       if (updateError) {
         console.error('Escrow status update error:', updateError);
         throw new Error('Failed to update escrow status');
+      }
+
+      // Update task status to in_progress
+      const { error: taskError } = await supabase
+        .from('tasks')
+        .update({ status: 'in_progress' })
+        .eq('id', taskId);
+
+      if (taskError) {
+        console.error('Task status update error:', taskError);
+        throw new Error('Failed to update task status');
       }
 
       console.log('Escrow status updated to funded');
