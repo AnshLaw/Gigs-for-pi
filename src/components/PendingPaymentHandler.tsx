@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { AlertCircle, Check, X } from 'lucide-react';
 import { Button } from './ui/Button';
 import platformAPIClient from '../lib/platformAPIClient';
+import type { PiPayment } from '../lib/types/pi';
 
-interface PendingPayment {
-  identifier: string;
-  transaction?: {
-    txid: string;
-  };
+// Extend PiPayment with additional properties from API response
+interface PendingPayment extends Omit<PiPayment, 'status'> {
+  status: string; // Override status to match API response
+  api_status?: string; // Additional status from API
 }
 
 export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }) {
@@ -20,17 +20,53 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
     setError(null);
     
     try {
+      // First try to get incomplete payments from Pi SDK
       await new Promise<void>((resolve) => {
-        window.Pi.authenticate(['payments'], (auth: any) => {
-          if (auth.payments && auth.payments.length > 0) {
-            setPendingPayments(auth.payments);
+        window.Pi.authenticate(
+          ['payments'], 
+          async (payment: PiPayment) => {
+            console.log('Found incomplete payment:', payment);
+            try {
+              const response = await platformAPIClient.get(`/payments/${payment.identifier}`);
+              setPendingPayments([{
+                ...payment,
+                ...response.data,
+                status: response.data.status || payment.status // Ensure status is always defined
+              }]);
+            } catch (err) {
+              console.error('Error fetching payment details:', err);
+              setPendingPayments([{
+                ...payment,
+                api_status: 'error'
+              }]);
+            }
+            resolve();
+          },
+          (error: Error) => {
+            console.error('Pi SDK error:', error);
+            resolve();
           }
-          resolve();
-        });
+        );
       });
+
+      // If no payments found in SDK, try to get from platform API
+      if (pendingPayments.length === 0) {
+        const response = await platformAPIClient.get('/payments');
+        const payments = response.data.filter((p: PendingPayment) => 
+          p.status === 'pending' || p.status === 'submitted'
+        );
+        if (payments.length > 0) {
+          console.log('Found pending payments from API:', payments);
+          setPendingPayments(payments);
+        }
+      }
+
+      if (pendingPayments.length === 0) {
+        setError('No pending payments found. If you believe this is incorrect, please try again.');
+      }
     } catch (err) {
       console.error('Error checking pending payments:', err);
-      setError('Failed to check pending payments');
+      setError('Failed to check pending payments. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -43,6 +79,24 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
     try {
       const paymentId = payment.identifier;
       
+      // First check current payment status
+      const response = await platformAPIClient.get(`/payments/${paymentId}`);
+      const currentStatus = response.data.status;
+
+      if (currentStatus === 'completed') {
+        console.log('Payment already completed:', paymentId);
+        setPendingPayments(prev => prev.filter(p => p.identifier !== paymentId));
+        onComplete();
+        return;
+      }
+
+      if (currentStatus === 'cancelled' || currentStatus === 'expired') {
+        console.log('Payment already cancelled/expired:', paymentId);
+        setPendingPayments(prev => prev.filter(p => p.identifier !== paymentId));
+        onComplete();
+        return;
+      }
+
       if (action === 'complete' && payment.transaction?.txid) {
         await platformAPIClient.post(`/payments/${paymentId}/complete`, { 
           txid: payment.transaction.txid 
@@ -57,7 +111,7 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
       onComplete();
     } catch (err) {
       console.error('Error handling payment:', err);
-      setError('Failed to handle payment');
+      setError(err instanceof Error ? err.message : 'Failed to handle payment');
     } finally {
       setLoading(false);
     }
@@ -89,8 +143,16 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
               key={payment.identifier}
               className="p-4 bg-gray-50 rounded-lg space-y-3"
             >
-              <div className="text-sm">
+              <div className="text-sm space-y-1">
                 <p className="font-medium">Payment ID: {payment.identifier}</p>
+                <p className="text-gray-500">Amount: {payment.amount} π</p>
+                <p className="text-gray-500">
+                  Created: {new Date(payment.created_at).toLocaleString()}
+                </p>
+                <p className="text-gray-500">Status: {payment.status}</p>
+                {payment.api_status && (
+                  <p className="text-gray-500">API Status: {payment.api_status}</p>
+                )}
                 {payment.transaction?.txid && (
                   <p className="text-gray-500">
                     Transaction ID: {payment.transaction.txid}
