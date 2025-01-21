@@ -119,6 +119,35 @@ export async function initiatePayment(amount: number): Promise<PaymentResult> {
   }
 }
 
+// For A2U payments, we'll use the Pi Backend SDK
+export async function initiateA2UPayment(amount: number, userUid: string): Promise<PaymentResult> {
+  try {
+    // Create payment data
+    const paymentData = {
+      amount,
+      memo: "Task payment release",
+      metadata: { type: "task_payment_release", timestamp: Date.now() },
+      uid: userUid
+    };
+
+    // Make API call to create A2U payment
+    const { data: payment } = await platformAPIClient.post('/a2u-payments/create', paymentData);
+    
+    if (!payment?.paymentId || !payment?.txid) {
+      throw new Error('Failed to create A2U payment');
+    }
+
+    return {
+      status: "completed",
+      paymentId: payment.paymentId,
+      txid: payment.txid
+    };
+  } catch (err) {
+    console.error('A2U payment error:', err);
+    throw new Error('Failed to process payment to executor');
+  }
+}
+
 export async function completePayment(paymentId: string, txid: string): Promise<PaymentResult> {
   try {
     await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
