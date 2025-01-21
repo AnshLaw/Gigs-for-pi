@@ -175,7 +175,19 @@ export function TaskActions({
     setError(null);
 
     try {
-      // Get the latest pending submission
+      // First check if escrow is funded
+      const { data: escrow, error: escrowError } = await supabase
+        .from('escrow_payments')
+        .select('id')
+        .eq('task_id', taskId)
+        .eq('status', 'funded')
+        .single();
+
+      if (escrowError || !escrow) {
+        throw new Error('Task escrow has not been funded yet. Please fund the escrow first.');
+      }
+
+      // Then check for pending submission
       const { data: submissions, error: fetchError } = await supabase
         .from('task_submissions')
         .select('id')
@@ -185,18 +197,9 @@ export function TaskActions({
         .limit(1);
 
       if (fetchError) throw fetchError;
-      if (!submissions?.length) throw new Error('No pending submission found');
-
-      // Get the funded escrow payment
-      const { data: escrow, error: escrowError } = await supabase
-        .from('escrow_payments')
-        .select('id')
-        .eq('task_id', taskId)
-        .eq('status', 'funded')
-        .single();
-
-      if (escrowError) throw escrowError;
-      if (!escrow) throw new Error('No funded escrow payment found');
+      if (!submissions?.length) {
+        throw new Error('No pending submission found. Please wait for the executor to mark the task as delivered.');
+      }
 
       // Release the escrow payment
       const { error: releaseError } = await supabase.rpc('release_escrow_payment', {
