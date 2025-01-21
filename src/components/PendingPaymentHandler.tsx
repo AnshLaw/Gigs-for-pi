@@ -24,11 +24,12 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
       let foundPayments: PendingPayment[] = [];
 
       // First try to get incomplete payments from Pi SDK
-      await new Promise<void>((resolve) => {
-        window.Pi.authenticate(
-          ['payments'], 
-          async (payment: PiPayment) => {
-            console.log('Found incomplete payment:', payment);
+      try {
+        const authResult = await window.Pi.authenticate(['payments'], () => {});
+        console.log('Auth result:', authResult);
+
+        if (authResult.user.payments?.length) {
+          for (const payment of authResult.user.payments) {
             try {
               const response = await platformAPIClient.get(`/payments/${payment.identifier}`);
               foundPayments.push({
@@ -43,14 +44,11 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
                 api_status: 'error'
               });
             }
-            resolve();
-          },
-          (error: Error) => {
-            console.error('Pi SDK error:', error);
-            resolve();
           }
-        );
-      });
+        }
+      } catch (err) {
+        console.error('Pi SDK error:', err);
+      }
 
       // If no payments found in SDK, try to get from platform API
       if (foundPayments.length === 0) {
@@ -71,6 +69,7 @@ export function PendingPaymentHandler({ onComplete }: { onComplete: () => void }
       if (foundPayments.length === 0) {
         setError('No pending payments found. If you believe this is incorrect, please try again.');
       } else {
+        console.log('Setting pending payments:', foundPayments);
         setPendingPayments(foundPayments);
       }
     } catch (err) {
