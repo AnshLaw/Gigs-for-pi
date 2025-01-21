@@ -14,13 +14,6 @@ interface TaskActionsProps {
   onStatusChange: () => void;
 }
 
-interface TaskWithExecutor {
-  executor_id: string;
-  executor: {
-    wallet_address: string | null;
-  } | null;
-}
-
 export function TaskActions({ 
   taskId, 
   status, 
@@ -34,14 +27,13 @@ export function TaskActions({
   const [showPendingHandler, setShowPendingHandler] = useState(false);
   const [hasAcceptedBid, setHasAcceptedBid] = useState(false);
   const [hasFundedEscrow, setHasFundedEscrow] = useState(false);
+  const [hasSubmission, setHasSubmission] = useState(false);
 
   useEffect(() => {
-    if (isCreator) {
-      checkBidAndEscrowStatus();
-    }
-  }, [isCreator, taskId, status]);
+    checkTaskStatus();
+  }, [taskId, status]);
 
-  const checkBidAndEscrowStatus = async () => {
+  const checkTaskStatus = async () => {
     try {
       // Check if there's an accepted bid
       const { data: acceptedBid } = await supabase
@@ -53,19 +45,27 @@ export function TaskActions({
 
       setHasAcceptedBid(!!acceptedBid);
 
-      if (acceptedBid) {
-        // Check if escrow is funded
-        const { data: escrow } = await supabase
-          .from('escrow_payments')
-          .select('id')
-          .eq('task_id', taskId)
-          .eq('status', 'funded')
-          .single();
+      // Check if escrow is funded
+      const { data: escrow } = await supabase
+        .from('escrow_payments')
+        .select('id')
+        .eq('task_id', taskId)
+        .eq('status', 'funded')
+        .single();
 
-        setHasFundedEscrow(!!escrow);
-      }
+      setHasFundedEscrow(!!escrow);
+
+      // Check if there's a pending submission
+      const { data: submission } = await supabase
+        .from('task_submissions')
+        .select('id')
+        .eq('task_id', taskId)
+        .eq('status', 'pending')
+        .single();
+
+      setHasSubmission(!!submission);
     } catch (err) {
-      console.error('Error checking bid/escrow status:', err);
+      console.error('Error checking task status:', err);
     }
   };
 
@@ -152,7 +152,7 @@ export function TaskActions({
         throw new Error('Failed to update task status');
       }
 
-      console.log('Escrow status updated to funded');
+      console.log('Task and escrow updated successfully');
       setHasFundedEscrow(true);
       onStatusChange();
     } catch (err) {
@@ -196,6 +196,7 @@ export function TaskActions({
       if (submissionError) throw submissionError;
 
       console.log('Task marked as delivered');
+      setHasSubmission(true);
       onStatusChange();
     } catch (err) {
       console.error('Delivery error:', err);
@@ -213,7 +214,7 @@ export function TaskActions({
       // First check if escrow is funded
       const { data: escrow, error: escrowError } = await supabase
         .from('escrow_payments')
-        .select('id, amount')
+        .select('id')
         .eq('task_id', taskId)
         .eq('status', 'funded')
         .single();
@@ -236,30 +237,6 @@ export function TaskActions({
         throw new Error('No pending submission found. Please wait for the executor to mark the task as delivered.');
       }
 
-      // Get executor's profile to get their wallet address
-      const { data: task, error: taskError } = await supabase
-        .from('tasks')
-        .select<string, TaskWithExecutor>(`
-          executor_id,
-          executor:profiles!tasks_executor_id_fkey (
-            wallet_address
-          )
-        `)
-        .eq('id', taskId)
-        .single();
-
-      if (taskError) throw taskError;
-      if (!task?.executor?.wallet_address) {
-        throw new Error('Executor has not set up their wallet address');
-      }
-
-      // Initiate payment to executor
-      const paymentResult = await initiatePayment(escrow.amount);
-      
-      if (!paymentResult?.paymentId || !paymentResult?.txid) {
-        throw new Error('Payment to executor failed');
-      }
-
       // Release the escrow payment
       const { error: releaseError } = await supabase.rpc('release_escrow_payment', {
         p_task_id: taskId,
@@ -276,12 +253,10 @@ export function TaskActions({
 
       if (updateError) throw updateError;
 
+      console.log('Task approved and payment released');
       onStatusChange();
     } catch (err) {
       console.error('Approval error:', err);
-      if (err instanceof Error && err.message.includes('pending payment')) {
-        setShowPendingHandler(true);
-      }
       setError(err instanceof Error ? err.message : 'Failed to approve task');
     } finally {
       setLoading(false);
@@ -308,30 +283,18 @@ export function TaskActions({
         <>
           {isCreator && (
             <>
-              {status === 'open' && (
-                <>
-                  {!hasAcceptedBid ? (
-                    <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-md">
-                      Accept a bid to proceed with funding the escrow.
-                    </div>
-                  ) : !hasFundedEscrow ? (
-                    <Button
-                      onClick={handleInitiatePayment}
-                      isLoading={loading}
-                      className="w-full"
-                    >
-                      <CheckCircle className="h-4 w-4 mr-2" />
-                      Fund Escrow ({bidAmount} π)
-                    </Button>
-                  ) : (
-                    <div className="text-sm text-green-600 bg-green-50 p-3 rounded-md">
-                      Escrow has been funded. Waiting for task completion.
-                    </div>
-                  )}
-                </>
+              {status === 'open' && hasAcceptedBid && !hasFundedEscrow && (
+                <Button
+                  onClick={handleInitiatePayment}
+                  isLoading={loading}
+                  className="w-full"
+                >
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                  Fund Escrow ({bidAmount} π)
+                </Button>
               )}
 
-              {status === 'in_progress' && hasFundedEscrow && (
+              {status === 'in_progress' && hasSubmission && (
                 <Button
                   onClick={handleApproval}
                   isLoading={loading}
@@ -344,7 +307,7 @@ export function TaskActions({
             </>
           )}
 
-          {isExecutor && status === 'in_progress' && (
+          {isExecutor && status === 'in_progress' && !hasSubmission && (
             <Button
               onClick={handleDelivery}
               isLoading={loading}
