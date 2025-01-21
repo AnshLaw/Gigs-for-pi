@@ -32,7 +32,6 @@ export function TaskActions({
 
     try {
       // First initiate and complete the Pi payment
-      console.log('Initiating payment for amount:', bidAmount);
       const paymentResult = await initiatePayment(bidAmount);
       
       if (!paymentResult?.paymentId || !paymentResult?.txid) {
@@ -119,7 +118,6 @@ export function TaskActions({
 
       if (submissionError) throw submissionError;
 
-      console.log('Task marked as delivered');
       onStatusChange();
     } catch (err) {
       console.error('Delivery error:', err);
@@ -173,7 +171,6 @@ export function TaskActions({
 
       if (updateError) throw updateError;
 
-      console.log('Task approved and payment released');
       onStatusChange();
     } catch (err) {
       console.error('Approval error:', err);
