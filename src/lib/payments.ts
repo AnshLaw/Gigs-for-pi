@@ -1,5 +1,6 @@
 import platformAPIClient from './platformAPIClient';
 import type { PaymentData } from '../types/pi';
+import PiNetwork from 'pi-backend';
 
 interface PaymentResult {
   status: string;
@@ -8,6 +9,12 @@ interface PaymentResult {
 }
 
 let paymentInProgress = false;
+
+// Initialize Pi Network backend SDK
+const pi = new PiNetwork(
+  import.meta.env.VITE_PI_API_KEY,
+  import.meta.env.VITE_PI_WALLET_PRIVATE_SEED
+);
 
 export async function initiatePayment(amount: number): Promise<PaymentResult> {
   if (!window.Pi) {
@@ -119,28 +126,30 @@ export async function initiatePayment(amount: number): Promise<PaymentResult> {
   }
 }
 
-// For A2U payments, we'll use the Pi Backend SDK
 export async function initiateA2UPayment(amount: number, userUid: string): Promise<PaymentResult> {
   try {
-    // Create payment data
-    const paymentData = {
+    // Create payment
+    const paymentId = await pi.createPayment({
       amount,
       memo: "Task payment release",
       metadata: { type: "task_payment_release", timestamp: Date.now() },
       uid: userUid
-    };
+    });
 
-    // Make API call to create A2U payment
-    const { data: payment } = await platformAPIClient.post('/a2u-payments/create', paymentData);
-    
-    if (!payment?.paymentId || !payment?.txid) {
-      throw new Error('Failed to create A2U payment');
-    }
+    console.log('A2U payment created:', paymentId);
+
+    // Submit payment to blockchain
+    const txid = await pi.submitPayment(paymentId);
+    console.log('A2U payment submitted:', txid);
+
+    // Complete the payment
+    const completedPayment = await pi.completePayment(paymentId, txid);
+    console.log('A2U payment completed:', completedPayment);
 
     return {
       status: "completed",
-      paymentId: payment.paymentId,
-      txid: payment.txid
+      paymentId,
+      txid
     };
   } catch (err) {
     console.error('A2U payment error:', err);
