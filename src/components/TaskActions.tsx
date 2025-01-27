@@ -212,7 +212,7 @@ export function TaskActions({
       // Get funded escrow payment
       const { data: escrow, error: escrowError } = await supabase
         .from('escrow_payments')
-        .select('id, amount')
+        .select('id')
         .eq('task_id', taskId)
         .eq('status', 'funded')
         .single();
@@ -235,19 +235,12 @@ export function TaskActions({
         throw new Error('No pending submission found');
       }
 
-      // Initiate payment to executor
-      const paymentResult = await initiatePayment(escrow.amount);
-      
-      if (!paymentResult?.paymentId || !paymentResult?.txid) {
-        throw new Error('Payment to executor failed');
-      }
-
-      // Release escrow payment with executor payment details
+      // Release escrow payment
       const { error: releaseError } = await supabase.rpc('release_escrow_payment', {
         p_task_id: taskId,
         p_escrow_id: escrow.id,
-        p_payment_to_executor_id: paymentResult.paymentId,
-        p_payment_to_executor_txid: paymentResult.txid
+        p_payment_to_executor_id: null,
+        p_payment_to_executor_txid: null
       });
 
       if (releaseError) throw releaseError;
