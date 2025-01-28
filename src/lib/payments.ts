@@ -1,5 +1,6 @@
 import platformAPIClient from './platformAPIClient';
 import type { PaymentData } from '../types/pi';
+import { AxiosError } from 'axios';
 
 interface PaymentResult {
   status: string;
@@ -96,7 +97,7 @@ export async function initiatePayment(amount: number): Promise<PaymentResult> {
       console.error('Error creating payment:', err);
       clearTimeout(timeoutId);
       paymentInProgress = false;
-      reject(new Error('Failed to create payment. Please try again.'));
+      reject(err instanceof Error ? err : new Error('Failed to create payment'));
     }
   });
 }
@@ -113,35 +114,51 @@ export async function completePayment(paymentId: string, txid: string): Promise<
     };
   } catch (err) {
     console.error("Payment completion failed:", err);
-    throw new Error('Payment completion failed. Please try again.');
+    throw err instanceof Error ? err : new Error('Payment completion failed');
   }
 }
 
-// New function to handle A2U payments
 export async function sendPaymentToUser(amount: number, userUid: string, memo: string): Promise<PaymentResult> {
   try {
+    console.log('Creating A2U payment:', { amount, userUid, memo });
+
     // Create A2U payment
-    const createResponse = await platformAPIClient.post('/a2u-payments/create', {
+    const createResponse = await platformAPIClient.post('/payments', {
       amount,
       memo,
       metadata: { type: 'escrow_release', timestamp: Date.now() },
-      uid: userUid
+      to_address: userUid,
+      payment_type: 'app_to_user'
     });
 
-    const { payment_id } = createResponse.data;
+    if (!createResponse.data?.identifier) {
+      console.error('Invalid create payment response:', createResponse.data);
+      throw new Error('Invalid payment creation response');
+    }
+
+    const paymentId = createResponse.data.identifier;
+    console.log('Payment created:', paymentId);
 
     // Submit payment to blockchain
-    const submitResponse = await platformAPIClient.post(`/a2u-payments/${payment_id}/submit`);
-    const { txid } = submitResponse.data;
+    const submitResponse = await platformAPIClient.post(`/payments/${paymentId}/submit`);
+    
+    if (!submitResponse.data?.txid) {
+      console.error('Invalid submit payment response:', submitResponse.data);
+      throw new Error('Invalid payment submission response');
+    }
+
+    const txid = submitResponse.data.txid;
+    console.log('Payment submitted:', txid);
 
     // Complete the payment
-    const completeResponse = await platformAPIClient.post(`/a2u-payments/${payment_id}/complete`, { txid });
+    const completeResponse = await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
     const payment = completeResponse.data;
+    console.log('Payment completed:', payment);
 
     if (payment.status.developer_completed && payment.transaction?.verified) {
       return {
         status: 'completed',
-        paymentId: payment_id,
+        paymentId,
         txid
       };
     }
@@ -149,6 +166,10 @@ export async function sendPaymentToUser(amount: number, userUid: string, memo: s
     throw new Error('Payment verification failed');
   } catch (err) {
     console.error('A2U payment error:', err);
-    throw new Error('Failed to send payment to user');
+    if (err instanceof AxiosError) {
+      const errorMessage = err.response?.data?.message || err.message;
+      throw new Error(`Payment failed: ${errorMessage}`);
+    }
+    throw err instanceof Error ? err : new Error('Failed to send payment to user');
   }
 }
