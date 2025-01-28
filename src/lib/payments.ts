@@ -1,6 +1,14 @@
 import platformAPIClient from './platformAPIClient';
 import type { PaymentData } from '../types/pi';
 import { AxiosError } from 'axios';
+import axios from 'axios';
+
+// Create a separate client for our API
+const apiClient = axios.create({
+  baseURL: '/api', // This will be redirected to our Netlify function
+  timeout: 20000,
+  headers: { 'Content-Type': 'application/json' }
+});
 
 interface PaymentResult {
   status: string;
@@ -122,25 +130,24 @@ export async function sendPaymentToUser(amount: number, userUid: string, memo: s
   try {
     console.log('Creating A2U payment:', { amount, userUid, memo });
 
-    // Create A2U payment
-    const createResponse = await platformAPIClient.post('/payments', {
+    // Create A2U payment through our API
+    const createResponse = await apiClient.post('/a2u-payments/create', {
       amount,
       memo,
       metadata: { type: 'escrow_release', timestamp: Date.now() },
-      to_address: userUid,
-      payment_type: 'app_to_user'
+      uid: userUid
     });
 
-    if (!createResponse.data?.identifier) {
+    if (!createResponse.data?.payment_id) {
       console.error('Invalid create payment response:', createResponse.data);
       throw new Error('Invalid payment creation response');
     }
 
-    const paymentId = createResponse.data.identifier;
+    const paymentId = createResponse.data.payment_id;
     console.log('Payment created:', paymentId);
 
-    // Submit payment to blockchain
-    const submitResponse = await platformAPIClient.post(`/payments/${paymentId}/submit`);
+    // Submit payment to blockchain through our API
+    const submitResponse = await apiClient.post(`/a2u-payments/${paymentId}/submit`);
     
     if (!submitResponse.data?.txid) {
       console.error('Invalid submit payment response:', submitResponse.data);
@@ -150,12 +157,12 @@ export async function sendPaymentToUser(amount: number, userUid: string, memo: s
     const txid = submitResponse.data.txid;
     console.log('Payment submitted:', txid);
 
-    // Complete the payment
-    const completeResponse = await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
+    // Complete the payment through our API
+    const completeResponse = await apiClient.post(`/a2u-payments/${paymentId}/complete`, { txid });
     const payment = completeResponse.data;
     console.log('Payment completed:', payment);
 
-    if (payment.status.developer_completed && payment.transaction?.verified) {
+    if (payment.status === 'completed' || payment.status.developer_completed) {
       return {
         status: 'completed',
         paymentId,
@@ -167,7 +174,7 @@ export async function sendPaymentToUser(amount: number, userUid: string, memo: s
   } catch (err) {
     console.error('A2U payment error:', err);
     if (err instanceof AxiosError) {
-      const errorMessage = err.response?.data?.message || err.message;
+      const errorMessage = err.response?.data?.error || err.response?.data?.message || err.message;
       throw new Error(`Payment failed: ${errorMessage}`);
     }
     throw err instanceof Error ? err : new Error('Failed to send payment to user');
