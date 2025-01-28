@@ -4,8 +4,8 @@
   functions = "netlify/functions"
 
 [[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/payments/:splat"
+  from = "/api/a2u-payments/*"
+  to = "/.netlify/functions/payments/a2u-payments/:splat"
   status = 200
 
 [functions]
