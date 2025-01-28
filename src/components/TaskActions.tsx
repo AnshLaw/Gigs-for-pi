@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, AlertCircle } from 'lucide-react';
-import { initiatePayment, initiateA2UPayment } from '../lib/payments';
+import { initiatePayment, sendPaymentToUser } from '../lib/payments';
 import { supabase } from '../lib/supabase';
 import { Button } from './ui/Button';
 
@@ -13,41 +13,21 @@ interface TaskActionsProps {
   onStatusChange: () => void;
 }
 
-interface TaskBid {
-  id: string;
-  status: string;
+interface Executor {
+  pi_user_id: string;
+  wallet_address: string | null;
 }
 
 interface EscrowPayment {
   id: string;
   status: string;
+  amount: number;
 }
 
-interface TaskSubmission {
+interface TaskWithExecutor {
   id: string;
-  status: string;
-}
-
-interface TaskWithRelations {
-  status: string;
-  executor: {
-    id: string;
-    pi_user_id: string;
-    username: string;
-    rating: number;
-    completed_tasks: number;
-    wallet_address: string | null;
-  } | null;
-  bids: TaskBid[];
-  escrow_payments: EscrowPayment[] | null;
-  task_submissions: TaskSubmission[] | null;
-}
-
-interface TaskExecutorDetails {
-  executor: {
-    id: string;
-    pi_user_id: string;
-  } | null;
+  executor: Executor;
+  escrow_payments: EscrowPayment[];
 }
 
 export function TaskActions({ 
@@ -74,18 +54,11 @@ export function TaskActions({
     if (!taskId) return;
 
     try {
-      const { data: taskData, error: taskError } = await supabase
+      // Get task details with related data
+      const { data: task, error: taskError } = await supabase
         .from('tasks')
         .select(`
           status,
-          executor:profiles!tasks_executor_id_fkey!inner (
-            id,
-            pi_user_id,
-            username,
-            rating,
-            completed_tasks,
-            wallet_address
-          ),
           bids!inner (
             id,
             status
@@ -120,7 +93,6 @@ export function TaskActions({
         return;
       }
 
-      const task = taskData as unknown as TaskWithRelations;
       setTaskState({
         hasAcceptedBid: true,
         hasFundedEscrow: task.escrow_payments?.some(ep => ep.status === 'funded') ?? false,
@@ -254,38 +226,35 @@ export function TaskActions({
     setError(null);
 
     try {
-      // Get task details with executor's Pi user ID
-      const { data: taskData, error: taskError } = await supabase
+      // Get task details with executor and escrow info
+      const { data, error: taskError } = await supabase
         .from('tasks')
         .select(`
-          executor:profiles!tasks_executor_id_fkey!inner (
+          id,
+          executor:profiles!tasks_executor_id_fkey (
+            pi_user_id,
+            wallet_address
+          ),
+          escrow_payments (
             id,
-            pi_user_id
+            status,
+            amount
           )
         `)
         .eq('id', taskId)
         .single();
 
-      if (taskError || !taskData) {
-        throw new Error('Could not find task details');
+      if (taskError) throw new Error('Failed to get task details');
+      if (!data) throw new Error('Task not found');
+
+      // Cast the data to our interface type after validating the structure
+      const taskData = data as unknown as TaskWithExecutor;
+      if (!taskData.executor?.pi_user_id) {
+        throw new Error('Executor details not found');
       }
 
-      const task = taskData as unknown as TaskExecutorDetails;
-      if (!task.executor?.pi_user_id) {
-        throw new Error('Could not find executor details');
-      }
-
-      // Get funded escrow payment
-      const { data: escrow, error: escrowError } = await supabase
-        .from('escrow_payments')
-        .select('id, amount')
-        .eq('task_id', taskId)
-        .eq('status', 'funded')
-        .single();
-
-      if (escrowError || !escrow) {
-        throw new Error('No funded escrow payment found');
-      }
+      const escrow = taskData.escrow_payments?.find(ep => ep.status === 'funded');
+      if (!escrow) throw new Error('No funded escrow payment found');
 
       // Get pending submission
       const { data: submissions, error: fetchError } = await supabase
@@ -301,22 +270,34 @@ export function TaskActions({
         throw new Error('No pending submission found');
       }
 
-      // Initiate A2U payment to executor
-      const paymentResult = await initiateA2UPayment(escrow.amount, task.executor.pi_user_id);
-      
-      if (!paymentResult?.paymentId || !paymentResult?.txid) {
-        throw new Error('Payment to executor failed');
-      }
+      // Send payment to executor
+      const paymentResult = await sendPaymentToUser(
+        escrow.amount,
+        taskData.executor.pi_user_id,
+        `Payment for task ${taskId}`
+      );
 
-      // Release escrow payment with executor payment details
-      const { error: releaseError } = await supabase.rpc('release_escrow_payment', {
-        p_task_id: taskId,
-        p_escrow_id: escrow.id,
-        p_payment_to_executor_id: paymentResult.paymentId,
-        p_payment_to_executor_txid: paymentResult.txid
-      });
+      // Update escrow payment status
+      const { error: releaseError } = await supabase
+        .from('escrow_payments')
+        .update({ 
+          status: 'released',
+          payment_to_executor_id: paymentResult.paymentId,
+          payment_to_executor_txid: paymentResult.txid,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', escrow.id)
+        .eq('status', 'funded');
 
       if (releaseError) throw releaseError;
+
+      // Update task status
+      const { error: updateTaskError } = await supabase
+        .from('tasks')
+        .update({ status: 'completed' })
+        .eq('id', taskId);
+
+      if (updateTaskError) throw updateTaskError;
 
       // Update submission status
       const { error: updateError } = await supabase
