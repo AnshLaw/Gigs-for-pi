@@ -227,6 +227,7 @@ export function TaskActions({
 
     try {
       // Get task details with executor and escrow info
+      console.log('Fetching task details for approval...');
       const { data, error: taskError } = await supabase
         .from('tasks')
         .select(`
@@ -244,19 +245,32 @@ export function TaskActions({
         .eq('id', taskId)
         .single();
 
-      if (taskError) throw new Error('Failed to get task details');
-      if (!data) throw new Error('Task not found');
+      if (taskError) {
+        console.error('Task fetch error:', taskError);
+        throw new Error('Failed to get task details');
+      }
+      if (!data) {
+        console.error('No task data found');
+        throw new Error('Task not found');
+      }
+
+      console.log('Task data:', data);
 
       // Cast the data to our interface type after validating the structure
       const taskData = data as unknown as TaskWithExecutor;
       if (!taskData.executor?.pi_user_id) {
+        console.error('Missing executor details:', taskData.executor);
         throw new Error('Executor details not found');
       }
 
       const escrow = taskData.escrow_payments?.find(ep => ep.status === 'funded');
-      if (!escrow) throw new Error('No funded escrow payment found');
+      if (!escrow) {
+        console.error('No funded escrow found:', taskData.escrow_payments);
+        throw new Error('No funded escrow payment found');
+      }
 
       // Get pending submission
+      console.log('Fetching pending submission...');
       const { data: submissions, error: fetchError } = await supabase
         .from('task_submissions')
         .select('id')
@@ -271,13 +285,22 @@ export function TaskActions({
       }
 
       // Send payment to executor
+      console.log('Sending payment to executor:', {
+        amount: escrow.amount,
+        executorId: taskData.executor.pi_user_id,
+        taskId
+      });
+
       const paymentResult = await sendPaymentToUser(
         escrow.amount,
         taskData.executor.pi_user_id,
         `Payment for task ${taskId}`
       );
 
+      console.log('Payment sent successfully:', paymentResult);
+
       // Update escrow payment status
+      console.log('Updating escrow payment status...');
       const { error: releaseError } = await supabase
         .from('escrow_payments')
         .update({ 
@@ -292,6 +315,7 @@ export function TaskActions({
       if (releaseError) throw releaseError;
 
       // Update task status
+      console.log('Updating task status...');
       const { error: updateTaskError } = await supabase
         .from('tasks')
         .update({ status: 'completed' })
@@ -300,6 +324,7 @@ export function TaskActions({
       if (updateTaskError) throw updateTaskError;
 
       // Update submission status
+      console.log('Updating submission status...');
       const { error: updateError } = await supabase
         .from('task_submissions')
         .update({ status: 'approved' })
@@ -307,6 +332,7 @@ export function TaskActions({
 
       if (updateError) throw updateError;
 
+      console.log('Task approval completed successfully');
       await checkTaskState();
       onStatusChange();
     } catch (err) {
