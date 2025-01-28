@@ -116,3 +116,34 @@ export async function completePayment(paymentId: string, txid: string): Promise<
     throw new Error('Payment completion failed. Please try again.');
   }
 }
+
+// New function for app-to-user payment
+export async function initiateA2UPayment(amount: number, userUid: string): Promise<PaymentResult> {
+  try {
+    // Create A2U payment
+    const response = await platformAPIClient.post('/payments', {
+      amount,
+      memo: "Task payment release",
+      metadata: { type: "task_payment_release", timestamp: Date.now() },
+      uid: userUid
+    });
+
+    const paymentId = response.data.identifier;
+
+    // Submit payment to blockchain
+    const txResponse = await platformAPIClient.post(`/payments/${paymentId}/submit`);
+    const txid = txResponse.data.txid;
+
+    // Complete the payment
+    await platformAPIClient.post(`/payments/${paymentId}/complete`, { txid });
+
+    return {
+      status: "completed",
+      paymentId,
+      txid
+    };
+  } catch (err) {
+    console.error("A2U payment failed:", err);
+    throw new Error('Failed to process payment to executor. Please try again.');
+  }
+}
