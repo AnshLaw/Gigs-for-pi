@@ -209,17 +209,27 @@ export function TaskActions({
     setError(null);
 
     try {
-      // Get funded escrow payment
-      const { data: escrow, error: escrowError } = await supabase
-        .from('escrow_payments')
-        .select('id')
-        .eq('task_id', taskId)
-        .eq('status', 'funded')
+      // Get funded escrow payment and task details
+      const { data: taskData, error: taskError } = await supabase
+        .from('tasks')
+        .select(`
+          id,
+          executor:profiles!tasks_executor_id_fkey (
+            wallet_address
+          ),
+          escrow_payments (
+            id,
+            status
+          )
+        `)
+        .eq('id', taskId)
         .single();
 
-      if (escrowError || !escrow) {
-        throw new Error('No funded escrow payment found');
-      }
+      if (taskError) throw new Error('Failed to get task details');
+      if (!taskData) throw new Error('Task not found');
+
+      const escrow = taskData.escrow_payments?.find(ep => ep.status === 'funded');
+      if (!escrow) throw new Error('No funded escrow payment found');
 
       // Get pending submission
       const { data: submissions, error: fetchError } = await supabase
@@ -236,14 +246,24 @@ export function TaskActions({
       }
 
       // Release escrow payment
-      const { error: releaseError } = await supabase.rpc('release_escrow_payment', {
-        p_task_id: taskId,
-        p_escrow_id: escrow.id,
-        p_payment_to_executor_id: null,
-        p_payment_to_executor_txid: null
-      });
+      const { error: releaseError } = await supabase
+        .from('escrow_payments')
+        .update({ 
+          status: 'released',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', escrow.id)
+        .eq('status', 'funded');
 
       if (releaseError) throw releaseError;
+
+      // Update task status
+      const { error: updateTaskError } = await supabase
+        .from('tasks')
+        .update({ status: 'completed' })
+        .eq('id', taskId);
+
+      if (updateTaskError) throw updateTaskError;
 
       // Update submission status
       const { error: updateError } = await supabase
